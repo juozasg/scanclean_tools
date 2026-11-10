@@ -4,7 +4,13 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.15"
-dependencies = []
+dependencies = [
+    "img2pdf>=0.6.3",
+    "numpy>=2.5.4",
+    "opencv-python>=5.0.0.93",
+    "pillow>=13.0.0",
+    "scipy>=1.18.1",
+]
 
 [project.scripts]
 scanclean-tools = "scanclean_tools:main"
