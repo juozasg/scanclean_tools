@@ -16,6 +16,8 @@ What you can mark (press the key, then click on the photo):
         the second click finishes it
     x   ignore box: 2 clicks; automatic guides inside it are thrown away (messy figure)
     c   crop: click the 4 corners of the page, any order; the page is cut to this quad
+    e   edit: click a point of any hint to pick it up, move the mouse, click again to place it
+        (Esc puts it back where it was)
 
 Other keys
     g            show / hide the guides step 1 finds automatically: thin solid = used,
@@ -23,10 +25,9 @@ Other keys
                  because the page model could not straighten it (a mis-detection)
     wheel, + -   zoom at the mouse position        right-drag   pan        f   fit to the pane
                  (each pane has its own zoom and pan; these act on the pane under the mouse)
-    s            save the dewarped page exactly as step 1 would: PHOTO_DIR/flat/<name>.jpg plus
-                 flat/meta/<name>.json and flat/meta/<name>.mask.png (the mask is the crop quad
-                 when one is marked), all overwritten; the hints that produced it are copied to
-                 PHOTO_DIR/flat/<name>.hints.json
+    s            save the dewarped page exactly as step 1 would, in flat/ next to PHOTO_DIR:
+                 flat/<name>.jpg plus flat/meta/<name>.json and flat/meta/<name>.mask.png (the mask
+                 is the crop quad when one is marked), all overwritten; the hints are saved too
     u / Backspace  undo last point, or last finished item
     DEL (or 0)   remove all hints of this photo
     n / p        next / previous photo (hints are saved automatically)
@@ -43,7 +44,6 @@ Hints are stored next to each photo as <name>.hints.json (photo pixel coordinate
 import argparse
 import json
 import math
-import shutil
 import sys
 import threading
 import time
@@ -59,13 +59,15 @@ from .scanlib.util import imwrite, load_photo
 
 IMG_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 COL = {"h": (40, 40, 255), "v": (255, 110, 0), "r": (0, 150, 255), "x": (120, 120, 120),
-       "c": (0, 170, 0), "cur": (0, 220, 255)}
+       "c": (0, 170, 0), "e": (255, 255, 255), "cur": (0, 220, 255)}
 NAME = {"h": "HORIZONTAL line", "v": "VERTICAL line", "r": "RECTANGLE (2 corners)",
-        "x": "IGNORE box (2 clicks)", "c": "CROP quad (4 corners)"}
+        "x": "IGNORE box (2 clicks)", "c": "CROP quad (4 corners)", "e": "EDIT (move points)"}
 NEED = {"r": 2, "x": 2, "c": 4}
 DOUBLE_S, DOUBLE_PX = 0.4, 6       # a second click this soon and this close is a double click
+PICK_PX = 10                       # edit mode: how close (window px) a click must be to a point
+EDIT_COL = (255, 255, 255)
 OPS = [("Horizontal", "h", "h"), ("Vertical", "v", "v"), ("Rectangle", "r", "r"), ("Ignore", "x", "x"),
-       ("Crop", "c", "c"), ("Finish", "Enter", None), ("Cancel", "Esc", None), ("Undo", "u", None),
+       ("Crop", "c", "c"), ("Edit", "e", "e"), ("Finish", "Enter", None), ("Cancel", "Esc", None), ("Undo", "u", None),
        ("Guides", "g", None), ("List", "l", None), ("Fit", "f", None), ("Zoom", "+/-", None),
        ("Clear", "0", None), ("Save", "s", None), ("Next", "n", None), ("Prev", "p", None),
        ("Quit", "q", None)]
@@ -162,6 +164,7 @@ class Editor:
         self.auto = None                   # True while the automatic guides are shown
         self.mouse = (0, 0)
         self.last_click = (0.0, -99, -99)  # time and window position of the previous click
+        self.grab = None                   # edit mode: (item index, point index, original point)
         self.drag = None
         self.hover = None                  # index of the hint whose list line is under the mouse
         self.scroll = 0.0                  # first visible line of the list
@@ -249,7 +252,7 @@ class Editor:
                 self.result_small = cv2.resize(image, None, fx=0.25, fy=0.25, interpolation=cv2.INTER_AREA)
                 if first:
                     self.rview.fit(image.shape[1], image.shape[0])
-        if key != self.result_key and not (self.job is not None and self.job.is_alive()):
+        if key != self.result_key and self.grab is None and not (self.job is not None and self.job.is_alive()):
             self.job = threading.Thread(target=self._dewarp, args=(key, hints), daemon=True)
             self.job.start()
         self.fresh = key == self.result_key
@@ -265,14 +268,14 @@ class Editor:
             self.poll()
 
     def save_flat(self):
-        """Write the dewarped page next to the photos the way step 1 does - flat/<name>.jpg (or
-        over an existing .png), flat/meta/<name>.mask.png and flat/meta/<name>.json - and copy
-        the hints it was made with to flat/<name>.hints.json."""
+        """Write the dewarped page the way step 1 does, in flat/ next to the photo folder -
+        flat/<name>.jpg (or over an existing .png), flat/meta/<name>.mask.png and
+        flat/meta/<name>.json - and save the hints it was made with next to the photo."""
         self.want_save = False
         if self.error or self.result is None or self.result_mask is None or self.result_meta is None:
             self.msg = f"not saved, dewarp failed: {self.error}"
             return
-        flat = self.path.parent / "flat"
+        flat = self.path.resolve().parent.parent / "flat"
         flat.mkdir(exist_ok=True)
         png = flat / (self.path.stem + ".png")
         dst = png if png.exists() else flat / (self.path.stem + ".jpg")
@@ -283,13 +286,8 @@ class Editor:
         imwrite(flat / "meta" / (self.path.stem + ".mask.png"), self.result_mask)
         (flat / "meta" / (self.path.stem + ".json")).write_text(json.dumps(meta, indent=1), encoding="utf-8")
         self.write()
-        copy = flat / (self.path.stem + ".hints.json")
-        if self.hint_path.exists():
-            shutil.copyfile(self.hint_path, copy)
-        elif copy.exists():                # no hints were used
-            copy.unlink()
         self.saved_key = self.result_key
-        self.msg = f"saved flat/{dst.name} + meta" + (f" + flat/{copy.name}" if copy.exists() else "")
+        self.msg = f"saved {flat.name}/{dst.name} + meta"
 
     # ---- view -----------------------------------------------------------------
     def pane(self, sx):
@@ -352,7 +350,39 @@ class Editor:
         return f"{kind.upper()}  {pts[0][0]:.0f}, {pts[0][1]:.0f}"
 
     # ---- editing --------------------------------------------------------------
+    def point_at(self, sx, sy):
+        """(item index, point index) of the hint point nearest to a window position, or None."""
+        best, pick = PICK_PX ** 2 + 1, None
+        for i, (_, pts) in enumerate(self.items):
+            for j, p in enumerate(pts):
+                qx, qy = self.to_scr(p)
+                d = (qx - sx) ** 2 + (qy - sy) ** 2
+                if d < best:
+                    best, pick = d, (i, j)
+        return pick
+
+    def drop_grab(self, restore=True):
+        """Stop moving a point; put it back where it was unless restore is False."""
+        if self.grab is not None and restore:
+            i, j, orig = self.grab
+            self.items[i][1][j] = orig
+        self.grab = None
+
     def click(self, sx, sy):
+        if self.mode == "e":                                # edit: pick up / place a point
+            if self.pane(sx) is not self.view:
+                return
+            if self.grab is not None:
+                x, y = self.to_img(sx, sy)
+                i, j, _ = self.grab
+                self.items[i][1][j] = [float(np.clip(x, 0, self.W - 1)), float(np.clip(y, 0, self.H - 1))]
+                self.drop_grab(restore=False)
+            else:
+                hit = self.point_at(sx, sy)
+                if hit is not None:
+                    i, j = hit
+                    self.grab = (i, j, list(self.items[i][1][j]))
+            return
         x, y = self.to_img(sx, sy)
         if self.pane(sx) is not self.view or not (0 <= x < self.W and 0 <= y < self.H):
             return                         # marks go on the photo only
@@ -403,14 +433,19 @@ class Editor:
     def key(self, k):
         """Returns 'next', 'prev', 'quit' or None."""
         ch = chr(k & 0xFF).lower() if 0 <= (k & 0xFF) < 128 else ""
-        if ch in ("h", "v", "r", "x", "c"):
+        if ch in ("h", "v", "r", "x", "c", "e"):
+            self.drop_grab()
             self.finish()
             self.cur, self.mode = [], ch
         elif ch in ("\r", "\n", " "):
             self.finish()
         elif ch in ("u", "\b", "\x7f"):
-            self.undo()
+            if self.grab is not None:
+                self.drop_grab()
+            else:
+                self.undo()
         elif ch == "0" or k in (0x2E0000, 65535, 3014656):     # DEL on Windows / X11
+            self.grab = None
             self.items, self.cur = [], []
         elif ch == "g":
             self.toggle_auto()
@@ -423,13 +458,16 @@ class Editor:
         elif ch in ("-", "_"):
             self.zoom(1 / 1.3)
         elif ch == "s":                          # save the dewarped page once it is up to date
+            self.drop_grab()
             self.finish()
             self.want_save = True
             self.msg = "saving ..."
             self.poll()
-        elif (k & 0xFF) == 27:                   # Esc: drop the item being marked
+        elif (k & 0xFF) == 27:                   # Esc: drop the item being marked / put the point back
+            self.drop_grab()
             self.cur = []
         elif ch in ("n", "p", "q"):
+            self.drop_grab()
             self.finish()
             if self.want_save:                   # a save is still waiting for the dewarp
                 self.wait()
@@ -449,11 +487,15 @@ class Editor:
                     self.zoom(math.exp(0.006 * amount if MAC else 0.22 * amount / 120), at)
             return
         self.mouse = (x, y)
+        if self.grab is not None and event == cv2.EVENT_MOUSEMOVE and not self.drag:
+            i, j, _ = self.grab
+            self.items[i][1][j] = list(self.to_img(x, y))
         hit = self.list_hit(x, y)
         if event in (cv2.EVENT_LBUTTONDOWN, cv2.EVENT_LBUTTONDBLCLK):   # Windows sends the 2nd click as DBLCLK
             if hit == "title":
                 Editor.list_open = not Editor.list_open
             elif isinstance(hit, tuple) and hit[0] == "del":
+                self.drop_grab()
                 del self.items[hit[1]]
             elif hit is None:
                 self.click(x, y)
@@ -534,6 +576,12 @@ class Editor:
             kind, pts = self.items[self.hover]
             self._shape(vis, kind, pts, (255, 255, 255), width=8)
             self._shape(vis, kind, pts, COL[kind], width=4)
+        if self.mode == "e":                                 # edit: ring on the point to pick / being moved
+            ij = self.grab[:2] if self.grab is not None else self.point_at(*self.mouse)
+            if ij is not None:
+                q = self.to_scr(self.items[ij[0]][1][ij[1]])
+                cv2.circle(vis, q, 9, (0, 0, 0), 3, cv2.LINE_AA)
+                cv2.circle(vis, q, 9, EDIT_COL, 2 if self.grab is None else 3, cv2.LINE_AA)
         if self.cur:
             self._shape(vis, self.mode, self.cur + [list(self.to_img(*self.mouse))], COL["cur"], closed_ok=False)
         vis = np.hstack([vis, self._draw_result()])

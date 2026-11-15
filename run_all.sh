@@ -7,7 +7,7 @@
 #                                       the PDF is always rebuilt from all cleaned pages
 #
 # Optional environment variables
-#   PDF=path/out.pdf        PDF to write (default: PHOTO_DIR/clean.pdf, PDF=none skips step 3)
+#   PDF=path/out.pdf        PDF to write (default: clean.pdf next to PHOTO_DIR, PDF=none skips step 3)
 #   DEWARP_OPTS="..."       extra options for scanclean-dewarp   e.g. "--format png"
 #   TONE_OPTS="..."         extra options for scanclean-tone     e.g. "--white 0.82 --margin 6"
 #   PDF_OPTS="..."          extra options for scanclean-pdf      e.g. "--dpi 400"
@@ -24,9 +24,10 @@ if [ $# -gt 0 ]; then ONLY=(--only "$@"); fi
 command -v uv >/dev/null 2>&1 || { echo "uv not found (https://docs.astral.sh/uv/)" >&2; exit 1; }
 RUN=(uv run --project "$HERE")          # project environment, current folder stays as it is
 
-FLAT="$SRC/flat"
-CLEAN="$SRC/clean"
-PDF="${PDF:-$SRC/clean.pdf}"
+OUT="$(cd "$SRC/.." && pwd)"           # flat/, clean/ and clean.pdf go next to the photo folder
+FLAT="$OUT/flat"
+CLEAN="$OUT/clean"
+PDF="${PDF:-$OUT/clean.pdf}"
 STEPS="${STEPS:-1 2 3}"
 
 for s in $STEPS; do

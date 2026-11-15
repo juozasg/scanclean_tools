@@ -1,9 +1,10 @@
-"""Step 2 logic: colour page -> greyscale scan (flat-field, levels, clean-up, trim)."""
+"""Step 2 logic: colour page -> greyscale scan (flat-field, levels, trim).
+The page image is assumed to show only paper (cropped by step 1 or by hand)."""
 import cv2
 import numpy as np
 
-from .layout import content_box, remove_edge_dirt
-from .paper import char_height, find_paper_mask, ink_level, paper_level
+from .layout import content_box
+from .paper import char_height, ink_level, paper_level
 from .util import to_gray
 
 
@@ -30,19 +31,10 @@ def estimate_text_height(gray, long_side=2000):
     return char_height(ink) / s
 
 
-def auto_mask(bgr, long_side=2000):
-    """Paper mask (255 = paper) computed from the image itself."""
-    s = min(1.0, long_side / max(bgr.shape[:2]))
-    small = cv2.resize(bgr, None, fx=s, fy=s, interpolation=cv2.INTER_AREA) if s < 1 else bgr
-    m = find_paper_mask(small) * 255
-    return cv2.resize(m, (bgr.shape[1], bgr.shape[0]), interpolation=cv2.INTER_NEAREST)
-
-
-def tone_page(bgr, mask=None, text_height=None, core=None, trim=True, margin=4.0,
+def tone_page(bgr, text_height=None, core=None, trim=True, margin=4.0,
               white=0.88, black=0.25, gamma=1.0, sharpen=0.5):
-    """Colour (or grey) page image -> uint8 greyscale scan.
+    """Colour (or grey) page image, showing only paper -> uint8 greyscale scan.
 
-    mask         255 where the pixel belongs to the page; everything else becomes white
     text_height  character height in px (estimated when None)
     core         x0, y0, x1, y1 that must stay inside the trimmed result (optional)
     trim         crop to the printed area plus `margin` text heights
@@ -50,10 +42,6 @@ def tone_page(bgr, mask=None, text_height=None, core=None, trim=True, margin=4.0
     gray = to_gray(bgr) if bgr.ndim == 3 else bgr.astype(np.float32)
     h = float(text_height) if text_height else estimate_text_height(gray)
     out = tone(gray, h, white, black, gamma, sharpen)
-    if mask is not None:
-        off = mask < 128
-        out[off] = 255
-        remove_edge_dirt(out, off, h)
     if trim:
         H, W = out.shape
         x0, y0, x1, y1 = content_box(out, core if core is not None else (W, H, 0, 0), h, margin * h)

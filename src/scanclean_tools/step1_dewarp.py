@@ -1,7 +1,7 @@
 """
 Step 1 - GEOMETRY ONLY: photo of a page -> flat page, colours untouched.
 
-  scanclean-dewarp PHOTO_DIR                 # -> PHOTO_DIR/flat/
+  scanclean-dewarp PHOTO_DIR                 # -> flat/ next to PHOTO_DIR
   scanclean-dewarp PHOTO_DIR --only 156 164  # redo selected pages (after adding hints)
 
 Writes, per photo
@@ -31,7 +31,7 @@ def fmt(d):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("src", help="folder with photos, or a single photo")
-    ap.add_argument("-o", "--out", help="output folder (default: <src>/flat)")
+    ap.add_argument("-o", "--out", help="output folder (default: flat/ next to the photo folder)")
     ap.add_argument("--only", nargs="*", help="process only these file stems (e.g. 157 164)")
     ap.add_argument("--format", choices=["jpg", "png"], default="jpg", help="jpg (quality 95) or lossless png")
     ap.add_argument("--scale", type=float, default=1.0, help="output pixel density relative to the photo")
@@ -46,7 +46,7 @@ def main(argv=None):
     files = list_images(src, args.only)
     if not files:
         sys.exit("no images found")
-    out_dir = Path(args.out) if args.out else (src.parent if src.is_file() else src) / "flat"
+    out_dir = Path(args.out) if args.out else (src.parent if src.is_file() else src).resolve().parent / "flat"
     (out_dir / "meta").mkdir(parents=True, exist_ok=True)
     if not args.no_debug:
         (out_dir / "debug").mkdir(exist_ok=True)

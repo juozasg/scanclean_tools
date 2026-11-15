@@ -4,9 +4,9 @@ A uv project. Three independent steps, each a command of its own, plus one that 
 
 | command | step | does | reads → writes |
 |---|---|---|---|
-| `scanclean-dewarp` | 1 | **geometry only**: un-warps the page, colours untouched | `photos/` → `photos/flat/` |
-| `scanclean-tone` | 2 | **colour only**: light, shadows, paper tint → greyscale; trim | `photos/flat/` → `photos/clean/` |
-| `scanclean-pdf` | 3 | bundles page images into a PDF | `photos/clean/` → `photos/clean.pdf` |
+| `scanclean-dewarp` | 1 | **geometry only**: un-warps the page, colours untouched | `photos/` → `flat/` |
+| `scanclean-tone` | 2 | **colour only**: light, shadows, paper tint → greyscale; trim | `flat/` → `clean/` |
+| `scanclean-pdf` | 3 | bundles page images into a PDF | `clean/` → `clean.pdf` |
 | `scanclean` | all | runs 1 → 2 → 3 | |
 | `dewarp-tool` | – | click-to-mark hints for pages step 1 gets wrong | `photos/<page>.hints.json` |
 
@@ -70,6 +70,7 @@ the tool.
    | `v` | 2+ points along a line, `Enter` or double-click | this line is vertical on the page |
    | `x` | 2 corners of a box | ignore automatic guides in here (messy figure) |
    | `c` | 4 corners of the page (any order) | cut the page to this quad |
+   | `e` | a point of any hint, then its new place | move that point (`Esc` puts it back) |
 
    `Enter` finishes a line, `Esc` cancels the item being marked, `u` undoes, `g` shows the
    automatic guides (solid = used, dark dashed = removed by an ignore box, magenta dashed =
@@ -81,8 +82,7 @@ the tool.
    every change. Each pane has its own zoom and pan; wheel, `+`/`-`, `f` and right-drag act on
    the pane under the mouse. `s` saves the dewarped page exactly as step 1 would:
    `flat/<page>.jpg` with its `flat/meta/<page>.json` and `flat/meta/<page>.mask.png` (the mask
-   is the crop quad when one is marked), all overwritten. The hints that produced it are copied
-   to `flat/<page>.hints.json`. Follow a bent line with several clicks; a
+   is the crop quad when one is marked), all overwritten. Follow a bent line with several clicks; a
    straight-looking line needs only its two ends.
 
 5. **Redo only those pages** (the PDF is rebuilt from all pages)
@@ -105,7 +105,7 @@ the tool.
 |---|---|
 | `--only 156 164` | only these pages (a single photo path works too) |
 | `--steps 2 3` | which steps to run |
-| `--pdf out.pdf` / `--no-pdf` | PDF path (default `PHOTO_DIR/clean.pdf`) / skip step 3 |
+| `--pdf out.pdf` / `--no-pdf` | PDF path (default `clean.pdf` next to the photo folder) / skip step 3 |
 | `--scale`, `--white`, `--black`, `--margin` | passed to step 1 / step 2, see below |
 
 ## `run_all.sh` settings (environment variables)
@@ -113,7 +113,7 @@ the tool.
 | variable | default | meaning |
 |---|---|---|
 | `STEPS` | `"1 2 3"` | which steps to run |
-| `PDF` | `PHOTO_DIR/clean.pdf` | PDF path; `PDF=none` skips step 3 |
+| `PDF` | `clean.pdf` next to `PHOTO_DIR` | PDF path; `PDF=none` skips step 3 |
 | `DEWARP_OPTS` | | extra options for step 1, e.g. `"--format png"` |
 | `TONE_OPTS` | | extra options for step 2, e.g. `"--white 0.82 --margin 6"` |
 | `PDF_OPTS` | | extra options for step 3, e.g. `"--dpi 400"` |
@@ -138,7 +138,6 @@ the tool.
 | `--black` | 0.25 | higher = bolder print |
 | `--margin` | 4 | white border around the print, in text heights |
 | `--no-trim` | | keep the full page frame from step 1 |
-| `--no-mask` | | do not whiten the area outside the page |
 | `--format` | `png` | `jpg` for smaller files |
 
 Step 2 also works on any folder of page images (e.g. flatbed scans): without `meta/` from
@@ -149,17 +148,18 @@ step 1 it estimates text height and paper area itself.
 ## Files between the steps
 
 ```
-photos/
-  167.jpg                     photo
-  167.hints.json              optional, from dewarp-tool
-  flat/167.jpg                step 1: flat colour page, cropped to the page
-  flat/meta/167.mask.png      step 1: white = this page (not desk, gutter, facing page)
-  flat/meta/167.json          step 1: text height, trim flag, fit quality
-  flat/debug/167_guides.jpg   step 1: guides + fitted grid on the photo
-  flat/report.json            step 1: the table, all pages
-  clean/167.png               step 2: greyscale scan
-  clean.pdf                   step 3
+photos/167.jpg                photo
+photos/167.hints.json         optional, from dewarp-tool
+flat/167.jpg                  step 1: flat colour page, cropped to the page
+flat/meta/167.mask.png        step 1: white = this page (not desk, gutter, facing page)
+flat/meta/167.json            step 1: text height, trim flag, fit quality
+flat/debug/167_guides.jpg     step 1: guides + fitted grid on the photo
+flat/report.json              step 1: the table, all pages
+clean/167.png                 step 2: greyscale scan
+clean.pdf                     step 3
 ```
+
+`flat/`, `clean/` and `clean.pdf` are made next to the photo folder, not inside it.
 
 ## Project layout
 
@@ -180,7 +180,7 @@ src/scanclean_tools/           the package (import name: scanclean_tools)
   scanlib/sheet.py             camera + curled-sheet model, polish field, resampling maps
   scanlib/layout.py            page limits (gutter, edges), trim box, edge clean-up
   scanlib/dewarp.py            step 1 as a function: dewarp_page(photo) -> image, mask, meta
-  scanlib/tone.py              step 2 as a function: tone_page(image, mask, ...) -> grey page
+  scanlib/tone.py              step 2 as a function: tone_page(image, ...) -> grey page
 ```
 
 The step modules only parse options and read / write files; from your own code use
@@ -200,7 +200,8 @@ Add a dependency with `uv add <package>`; after changing `[project.scripts]` run
    Guides the model cannot straighten are dropped and the fit repeated. A smooth 2-D
    polynomial field then removes the remaining 1–2 px. The photo is resampled once.
 3. **Tone.** Local paper brightness → white (flat-field), local ink level → black (faint
-   print near the gutter is lifted), greyscale levels, whitening outside the page.
+   print near the gutter is lifted), greyscale levels. Step 2 assumes each page image shows
+   only paper, so it uses no mask.
 
 ## Hint file format
 

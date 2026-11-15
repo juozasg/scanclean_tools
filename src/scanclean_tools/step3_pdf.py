@@ -1,8 +1,8 @@
 """
 Step 3 - bundle a folder of page images into one PDF (pages in natural file-name order).
 
-  scanclean-pdf PHOTO_DIR/clean                  # -> PHOTO_DIR/clean.pdf
-  scanclean-pdf PHOTO_DIR/clean -o article.pdf --dpi 300
+  scanclean-pdf clean                  # -> clean.pdf next to clean/
+  scanclean-pdf clean -o article.pdf --dpi 300
 
 Images are embedded as they are (no recompression). Requires: img2pdf
 """

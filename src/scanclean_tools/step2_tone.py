@@ -1,14 +1,15 @@
 """
 Step 2 - COLOUR ONLY: flat colour page -> clean greyscale scan.
 
-  scanclean-tone PHOTO_DIR/flat                   # -> PHOTO_DIR/clean/
-  scanclean-tone PHOTO_DIR/flat --white 0.82      # remove more show-through
+  scanclean-tone flat                   # -> clean/ next to flat/
+  scanclean-tone flat --white 0.82      # remove more show-through
   scanclean-tone some_folder --no-trim            # any folder of page images works
 
+Every input image is assumed to be cropped so that it shows only the paper of one page.
 Per page: flat-field (uneven light, shadows and paper tint -> white), local ink level (faint
-print is lifted), greyscale levels, whitening of everything that is not this page, trim to the
-printed area. The page mask and text height come from flat/meta/ (written by scanclean-dewarp);
-without them they are estimated from the image itself.
+print is lifted), greyscale levels, trim to the printed area. The text height and the trim
+flag come from flat/meta/<name>.json (written by scanclean-dewarp) when it exists; otherwise
+the text height is estimated from the image itself.
 """
 import argparse
 import json
@@ -17,7 +18,7 @@ from pathlib import Path
 
 import cv2
 
-from .scanlib.tone import auto_mask, tone_page
+from .scanlib.tone import tone_page
 from .scanlib.util import imread, imwrite, list_images
 
 
@@ -33,7 +34,6 @@ def main(argv=None):
     ap.add_argument("--sharpen", type=float, default=0.5)
     ap.add_argument("--margin", type=float, default=4.0, help="white border around the print, in text heights")
     ap.add_argument("--no-trim", action="store_true", help="keep the frame of the input image")
-    ap.add_argument("--no-mask", action="store_true", help="do not whiten anything outside the page")
     args = ap.parse_args(argv)
 
     src = Path(args.src)
@@ -41,22 +41,14 @@ def main(argv=None):
     if not files:
         sys.exit("no images found")
     base = src.parent if src.is_file() else src
-    out_dir = Path(args.out) if args.out else base.parent / "clean"
+    out_dir = Path(args.out) if args.out else base.resolve().parent / "clean"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for p in files:
         bgr = imread(p)
-        meta_p, mask_p = base / "meta" / (p.stem + ".json"), base / "meta" / (p.stem + ".mask.png")
+        meta_p = base / "meta" / (p.stem + ".json")
         meta = json.loads(meta_p.read_text(encoding="utf-8")) if meta_p.exists() else {}
-        if args.no_mask:
-            mask = None
-        elif mask_p.exists():
-            mask = imread(mask_p, cv2.IMREAD_GRAYSCALE)
-            if mask.shape != bgr.shape[:2]:              # stale sidecar
-                mask = auto_mask(bgr)
-        else:
-            mask = auto_mask(bgr)
-        out = tone_page(bgr, mask, meta.get("text_height"), meta.get("core"),
+        out = tone_page(bgr, meta.get("text_height"), meta.get("core"),
                         trim=not args.no_trim and meta.get("trim", True), margin=args.margin,
                         white=args.white, black=args.black, gamma=args.gamma, sharpen=args.sharpen)
         dst = out_dir / (p.stem + "." + args.format)
