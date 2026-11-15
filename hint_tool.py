@@ -22,6 +22,11 @@ Other keys
     n / p        next / previous photo (hints are saved automatically)
     q / Esc      save and quit
 
+List of hints (top left, newest first; each line = type letter + first point)
+    hover a line   highlights that hint on the page
+    click its x    deletes that hint
+    click the title, or press l, to fold / unfold the list; the wheel scrolls a long list
+
 Hints are stored next to each photo as <name>.hints.json (photo pixel coordinates).
 """
 import argparse
@@ -41,6 +46,8 @@ NAME = {"h": "HORIZONTAL line", "v": "VERTICAL line", "r": "RECTANGLE (4 corners
         "x": "IGNORE box (2 clicks)", "c": "CROP box (2 clicks)"}
 NEED = {"r": 4, "x": 2, "c": 2}
 MAC = sys.platform == "darwin"
+BAR_H = 26                                 # status bar at the top of the window
+PANEL_W, HEAD_H, ROW_H, DEL_W = 190, 24, 22, 26     # list of hints: width, title, row, x button
 
 
 def wheel_delta(flags):
@@ -58,6 +65,8 @@ def load(path):
 class Editor:
     """All state and logic of the tool; the window loop below only forwards events."""
 
+    list_open = True                       # list of hints unfolded? (kept from photo to photo)
+
     def __init__(self, path, win=(1500, 950)):
         self.path = Path(path)
         self.img = load(self.path)
@@ -70,6 +79,8 @@ class Editor:
         self.auto = None                   # automatic guides (list of (kind, pts)) when shown
         self.mouse = (0, 0)
         self.drag = None
+        self.hover = None                  # index of the hint whose list line is under the mouse
+        self.scroll = 0.0                  # first visible line of the list
         self.msg = ""
         self.fit()
         self.read()
@@ -127,6 +138,40 @@ class Editor:
         self.z = float(np.clip(self.z * factor, 0.05, 8.0))
         self.ox, self.oy = ix - sx / self.z, iy - sy / self.z
 
+    # ---- list of hints ----------------------------------------------------------
+    def list_rows(self):
+        """Visible lines of the list as (index into self.items, top y), newest hint first,
+        plus the number of hints that do not fit."""
+        room = max((self.win[1] - BAR_H - HEAD_H) // ROW_H, 2)
+        n = len(self.items)
+        if n > room:
+            room -= 1                                        # last line says how many are hidden
+        self.scroll = min(max(self.scroll, 0.0), float(max(n - room, 0)))
+        first = int(round(self.scroll))
+        order = list(range(n - 1, -1, -1))[first:first + room]
+        return [(i, BAR_H + HEAD_H + r * ROW_H) for r, i in enumerate(order)], n - len(order)
+
+    def list_hit(self, sx, sy):
+        """What part of the list is at this window position:
+        'title', ('row', i), ('del', i), 'more' (the "... more" line) or None (not on the list)."""
+        if sx >= PANEL_W or sy < BAR_H:
+            return None
+        if sy < BAR_H + HEAD_H:
+            return "title"
+        if not Editor.list_open:
+            return None
+        rows, hidden = self.list_rows()
+        for i, y in rows:
+            if y <= sy < y + ROW_H:
+                return ("del", i) if sx >= PANEL_W - DEL_W else ("row", i)
+        end = BAR_H + HEAD_H + len(rows) * ROW_H
+        return "more" if hidden and end <= sy < end + ROW_H else None
+
+    @staticmethod
+    def label(kind, pts):
+        """Type letter + first point, e.g. 'H  1234, 567'."""
+        return f"{kind.upper()}  {pts[0][0]:.0f}, {pts[0][1]:.0f}"
+
     # ---- editing --------------------------------------------------------------
     def click(self, sx, sy):
         x, y = self.to_img(sx, sy)
@@ -179,6 +224,8 @@ class Editor:
             self.items, self.cur = [], []
         elif ch == "g":
             self.toggle_auto()
+        elif ch == "l":
+            Editor.list_open = not Editor.list_open
         elif ch == "f":
             self.fit()
         elif ch in ("+", "="):
@@ -199,20 +246,27 @@ class Editor:
     def on_mouse(self, event, x, y, flags, _=None):
         if event in (cv2.EVENT_MOUSEWHEEL, cv2.EVENT_MOUSEHWHEEL):
             if event == cv2.EVENT_MOUSEWHEEL:
-                if MAC:
-                    # macOS: x, y are the scroll amount (pixels), not the cursor position;
-                    # a trackpad sends many small steps
-                    step, at = 0.006 * max(-60, min(60, y)), self.mouse
-                else:
-                    step, at = 0.22 * max(-240, min(240, wheel_delta(flags))) / 120, (x, y)
-                if step:
-                    self.zoom(math.exp(step), at)
+                # macOS: x, y are the scroll amount (pixels), not the cursor position;
+                # a trackpad sends many small steps. Elsewhere: +-120 per notch in `flags`.
+                at = self.mouse if MAC else (x, y)
+                amount = max(-60, min(60, y)) if MAC else max(-240, min(240, wheel_delta(flags)))
+                if self.list_hit(*at) is not None:           # over the list: scroll it
+                    self.scroll -= amount / ROW_H if MAC else amount / 120
+                elif amount:
+                    self.zoom(math.exp(0.006 * amount if MAC else 0.22 * amount / 120), at)
             return
         self.mouse = (x, y)
+        hit = self.list_hit(x, y)
         if event == cv2.EVENT_LBUTTONDOWN:
-            self.click(x, y)
+            if hit == "title":
+                Editor.list_open = not Editor.list_open
+            elif isinstance(hit, tuple) and hit[0] == "del":
+                del self.items[hit[1]]
+            elif hit is None:
+                self.click(x, y)
         elif event in (cv2.EVENT_RBUTTONDOWN, cv2.EVENT_MBUTTONDOWN):
-            self.drag = (x, y, self.ox, self.oy)
+            if hit is None:
+                self.drag = (x, y, self.ox, self.oy)
         elif event in (cv2.EVENT_RBUTTONUP, cv2.EVENT_MBUTTONUP):
             self.drag = None
         elif event == cv2.EVENT_MOUSEMOVE and self.drag:
@@ -220,24 +274,54 @@ class Editor:
             self.ox, self.oy = ox - (x - x0) / self.z, oy - (y - y0) / self.z
 
     # ---- drawing --------------------------------------------------------------
-    def _shape(self, vis, kind, pts, col, closed_ok=True):
+    def _shape(self, vis, kind, pts, col, closed_ok=True, width=2):
         s = [self.to_scr(p) for p in pts]
         if kind in "hv":
             if len(s) > 1:
-                cv2.polylines(vis, [np.array(s, np.int32)], False, col, 2, cv2.LINE_AA)
+                cv2.polylines(vis, [np.array(s, np.int32)], False, col, width, cv2.LINE_AA)
         elif kind == "r" and len(s) == 4 and closed_ok:
             c = np.mean(pts, 0)
             order = np.argsort([np.arctan2(p[1] - c[1], p[0] - c[0]) for p in pts])
-            cv2.polylines(vis, [np.array([s[i] for i in order], np.int32)], True, col, 2, cv2.LINE_AA)
+            cv2.polylines(vis, [np.array([s[i] for i in order], np.int32)], True, col, width, cv2.LINE_AA)
         elif kind in "xc" and len(s) == 2:
-            cv2.rectangle(vis, s[0], s[1], col, 2, cv2.LINE_AA)
+            cv2.rectangle(vis, s[0], s[1], col, width, cv2.LINE_AA)
             if kind == "x":
-                cv2.line(vis, s[0], s[1], col, 1, cv2.LINE_AA)
+                cv2.line(vis, s[0], s[1], col, max(width - 1, 1), cv2.LINE_AA)
         for q in s:
-            cv2.circle(vis, q, 4, col, -1, cv2.LINE_AA)
+            cv2.circle(vis, q, width + 2, col, -1, cv2.LINE_AA)
         if s and kind in "hvrxc":
             cv2.putText(vis, kind.upper(), (s[0][0] + 6, s[0][1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1,
                         cv2.LINE_AA)
+
+    def _draw_list(self, vis, hit):
+        x0, w, font = 0, PANEL_W, cv2.FONT_HERSHEY_SIMPLEX     # left and right edge of the list
+        rows, hidden = self.list_rows() if Editor.list_open else ([], 0)
+        end = BAR_H + HEAD_H + (len(rows) + bool(hidden)) * ROW_H
+        box = vis[BAR_H:end, x0:w]
+        box[:] = (0.22 * box + 0.78 * np.array((38, 38, 38))).astype(np.uint8)      # see-through dark
+        # title with a fold mark: triangle pointing down (open) or right (folded)
+        cv2.rectangle(vis, (x0, BAR_H), (w - 1, BAR_H + HEAD_H - 1), (70, 70, 70) if hit == "title" else (55, 55, 55), -1)
+        cx, cy = x0 + 13, BAR_H + HEAD_H // 2
+        tri = [(cx - 5, cy - 3), (cx + 5, cy - 3), (cx, cy + 4)] if Editor.list_open else \
+              [(cx - 3, cy - 5), (cx - 3, cy + 5), (cx + 4, cy)]
+        cv2.fillPoly(vis, [np.array(tri, np.int32)], (230, 230, 230), cv2.LINE_AA)
+        cv2.putText(vis, f"Hints ({len(self.items)})", (x0 + 26, BAR_H + 17), font, 0.48, (240, 240, 240), 1, cv2.LINE_AA)
+        for i, y in rows:
+            kind, pts = self.items[i]
+            if i == self.hover:
+                cv2.rectangle(vis, (x0, y), (w - 1, y + ROW_H - 1), (90, 90, 90), -1)
+            col = tuple(min(int(c) + 60, 255) for c in COL[kind])                   # readable on dark
+            text = self.label(kind, pts)
+            cv2.putText(vis, text[0], (x0 + 9, y + 16), font, 0.5, col, 2, cv2.LINE_AA)
+            cv2.putText(vis, text[1:], (x0 + 20, y + 16), font, 0.45, (235, 235, 235), 1, cv2.LINE_AA)
+            on_x = hit == ("del", i)                                                # the x button
+            bx, by = w - DEL_W + 5, y + 4
+            cv2.rectangle(vis, (bx, by), (bx + 14, by + 14), (60, 60, 230) if on_x else (75, 75, 75), -1)
+            xc = (255, 255, 255) if on_x else (130, 130, 255)
+            cv2.line(vis, (bx + 4, by + 4), (bx + 10, by + 10), xc, 2, cv2.LINE_AA)
+            cv2.line(vis, (bx + 10, by + 4), (bx + 4, by + 10), xc, 2, cv2.LINE_AA)
+        if hidden:
+            cv2.putText(vis, f"... {hidden} more (scroll)", (x0 + 9, end - 7), font, 0.42, (170, 170, 170), 1, cv2.LINE_AA)
 
     def render(self):
         w, h = self.win
@@ -248,8 +332,15 @@ class Editor:
             for kind, pts in self.auto:
                 s = np.array([self.to_scr(p) for p in pts], np.int32)
                 cv2.polylines(vis, [s], False, COL[kind], 1, cv2.LINE_AA)
-        for kind, pts in self.items:
-            self._shape(vis, kind, pts, COL[kind])
+        hit = self.list_hit(*self.mouse)
+        self.hover = hit[1] if isinstance(hit, tuple) else None
+        for i, (kind, pts) in enumerate(self.items):
+            if i != self.hover:
+                self._shape(vis, kind, pts, COL[kind])
+        if self.hover is not None:                           # highlighted hint: on top, with a halo
+            kind, pts = self.items[self.hover]
+            self._shape(vis, kind, pts, (255, 255, 255), width=8)
+            self._shape(vis, kind, pts, COL[kind], width=4)
         if self.cur:
             self._shape(vis, self.mode, self.cur + [list(self.to_img(*self.mouse))], COL["cur"], closed_ok=False)
         cv2.rectangle(vis, (0, 0), (w, 26), (30, 30, 30), -1)
@@ -258,6 +349,7 @@ class Editor:
                 f"{n['x']} ignore, {n['c']} crop |  h v r x c  ENTER=finish line  u=undo  g=auto guides  "
                 f"n/p=next/prev  q=quit   {self.msg}")
         cv2.putText(vis, txt, (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+        self._draw_list(vis, hit)
         return vis
 
 
