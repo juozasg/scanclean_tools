@@ -20,7 +20,8 @@ Other keys
     u / Backspace  undo last point, or last finished item
     DEL (or 0)   remove all hints of this photo
     n / p        next / previous photo (hints are saved automatically)
-    q / Esc      save and quit
+    Esc          cancel the item being marked (its points are dropped)
+    q            save and quit
 
 List of hints (top left, newest first; each line = type letter + first point)
     hover a line   highlights that hint on the page
@@ -45,6 +46,10 @@ COL = {"h": (40, 40, 255), "v": (255, 110, 0), "r": (0, 150, 255), "x": (120, 12
 NAME = {"h": "HORIZONTAL line", "v": "VERTICAL line", "r": "RECTANGLE (4 corners)",
         "x": "IGNORE box (2 clicks)", "c": "CROP box (2 clicks)"}
 NEED = {"r": 4, "x": 2, "c": 2}
+OPS = [("Horizontal", "h", "h"), ("Vertical", "v", "v"), ("Rectangle", "r", "r"), ("Ignore", "x", "x"),
+       ("Crop", "c", "c"), ("Finish", "Enter", None), ("Cancel", "Esc", None), ("Undo", "u", None),
+       ("Guides", "g", None), ("List", "l", None), ("Fit", "f", None), ("Zoom", "+/-", None),
+       ("Clear", "0", None), ("Next", "n", None), ("Prev", "p", None), ("Quit", "q", None)]
 MAC = sys.platform == "darwin"
 BAR_H = 26                                 # status bar at the top of the window
 PANEL_W, HEAD_H, ROW_H, DEL_W = 190, 24, 22, 26     # list of hints: width, title, row, x button
@@ -238,7 +243,9 @@ class Editor:
         elif ch == "p":
             self.finish()
             return "prev"
-        elif ch == "q" or (k & 0xFF) == 27:
+        elif (k & 0xFF) == 27:                   # Esc: drop the item being marked
+            self.cur = []
+        elif ch == "q":
             self.finish()
             return "quit"
         return None
@@ -343,14 +350,36 @@ class Editor:
             self._shape(vis, kind, pts, COL[kind], width=4)
         if self.cur:
             self._shape(vis, self.mode, self.cur + [list(self.to_img(*self.mouse))], COL["cur"], closed_ok=False)
-        cv2.rectangle(vis, (0, 0), (w, 26), (30, 30, 30), -1)
-        n = {k: sum(it[0] == k for it in self.items) for k in "hvrxc"}
-        txt = (f"{self.path.name}   mode: {NAME[self.mode]}   | hints: {n['h']} H, {n['v']} V, {n['r']} rect, "
-                f"{n['x']} ignore, {n['c']} crop |  h v r x c  ENTER=finish line  u=undo  g=auto guides  "
-                f"n/p=next/prev  q=quit   {self.msg}")
-        cv2.putText(vis, txt, (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+        self._draw_bar(vis)
         self._draw_list(vis, hit)
+        self._draw_status(vis)
         return vis
+
+    def _draw_bar(self, vis):
+        """Top bar: every operation as 'Word key', key in bold green, current mode highlighted."""
+        w, font, fs = self.win[0], cv2.FONT_HERSHEY_SIMPLEX, 0.45
+        cv2.rectangle(vis, (0, 0), (w, BAR_H), (30, 30, 30), -1)
+        size = [(cv2.getTextSize(word + " ", font, fs, 1)[0][0], cv2.getTextSize(key, font, fs, 2)[0][0])
+                for word, key, _ in OPS]
+        used = sum(a + b for a, b in size)
+        gap = max(8, min(28, (w - 16 - used) // max(len(OPS) - 1, 1)))      # spread over the bar
+        x, base = 8, BAR_H // 2 + 5
+        for (word, key, mode), (ww, kw) in zip(OPS, size):
+            if mode is not None and mode == self.mode:                     # active operation
+                cv2.rectangle(vis, (x - 5, 2), (x + ww + kw + 5, BAR_H - 3), (85, 85, 85), -1)
+                cv2.line(vis, (x - 5, BAR_H - 3), (x + ww + kw + 5, BAR_H - 3), COL[mode], 2)
+            cv2.putText(vis, word, (x, base), font, fs, (235, 235, 235), 1, cv2.LINE_AA)
+            cv2.putText(vis, key, (x + ww, base), font, fs, (60, 220, 60), 2, cv2.LINE_AA)
+            x += ww + kw + gap
+
+    def _draw_status(self, vis):
+        """File name and the latest message, bottom left."""
+        txt = self.path.name + (f"   {self.msg}" if self.msg else "")
+        font, fs = cv2.FONT_HERSHEY_SIMPLEX, 0.45
+        (tw, th), _ = cv2.getTextSize(txt, font, fs, 1)
+        h = self.win[1]
+        cv2.rectangle(vis, (0, h - th - 12), (tw + 16, h), (30, 30, 30), -1)
+        cv2.putText(vis, txt, (8, h - 7), font, fs, (235, 235, 235), 1, cv2.LINE_AA)
 
 
 def main(argv=None):
