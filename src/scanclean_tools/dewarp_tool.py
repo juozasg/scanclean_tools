@@ -20,8 +20,10 @@ Other keys
     g            show / hide the guides step 1 finds automatically (takes a few seconds)
     wheel, + -   zoom at the mouse position        right-drag   pan        f   fit to the pane
                  (each pane has its own zoom and pan; these act on the pane under the mouse)
-    s            save the dewarped page as PHOTO_DIR/flat/<name>.jpg (overwrites it) and copy the
-                 hints that produced it to PHOTO_DIR/flat/<name>.hints.json; no metadata is written
+    s            save the dewarped page exactly as step 1 would: PHOTO_DIR/flat/<name>.jpg plus
+                 flat/meta/<name>.json and flat/meta/<name>.mask.png (the mask is the crop quad
+                 when one is marked), all overwritten; the hints that produced it are copied to
+                 PHOTO_DIR/flat/<name>.hints.json
     u / Backspace  undo last point, or last finished item
     DEL (or 0)   remove all hints of this photo
     n / p        next / previous photo (hints are saved automatically)
@@ -47,7 +49,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .scanlib.dewarp import dewarp_page
+from .scanlib.dewarp import dewarp_page, status
 from .scanlib.guides import find_guides
 from .scanlib.hints import crop_points, order_quad
 from .scanlib.util import imwrite, load_photo
@@ -140,6 +142,8 @@ class Editor:
         self.done = None                   # its result: (hints key, image or None, error or None)
         self.result = None                 # dewarped page shown on the right ...
         self.result_small = None
+        self.result_mask = None            # ... its page mask and metadata, as step 1 makes them
+        self.result_meta = None
         self.result_key = None             # ... and the hints it was made with
         self.error = None
         self.fresh = False                 # does it match the current hints?
@@ -195,7 +199,7 @@ class Editor:
             if self.found is None:
                 self.found = find_guides(self.img)
             res = dewarp_page(self.img, hints, self.f35, found=self.found)
-            self.done = (key, res["image"], None)
+            self.done = (key, res, None)
         except Exception as e:             # the tool must keep working
             self.done = (key, None, str(e))
 
@@ -204,10 +208,11 @@ class Editor:
         hints = self.hints()
         key = json.dumps(hints, sort_keys=True)
         if self.done is not None:
-            (self.result_key, image, self.error), self.done = self.done, None
-            if image is not None:
+            (self.result_key, res, self.error), self.done = self.done, None
+            if res is not None:
                 first = self.result is None
-                self.result = image
+                image = self.result = res["image"]
+                self.result_mask, self.result_meta = res["mask"], res["meta"]
                 self.result_small = cv2.resize(image, None, fx=0.25, fy=0.25, interpolation=cv2.INTER_AREA)
                 if first:
                     self.rview.fit(image.shape[1], image.shape[0])
@@ -227,10 +232,11 @@ class Editor:
             self.poll()
 
     def save_flat(self):
-        """Write the dewarped page to flat/<name>.jpg (or over an existing .png) next to the
-        photos, and copy the hints it was made with to flat/<name>.hints.json."""
+        """Write the dewarped page next to the photos the way step 1 does - flat/<name>.jpg (or
+        over an existing .png), flat/meta/<name>.mask.png and flat/meta/<name>.json - and copy
+        the hints it was made with to flat/<name>.hints.json."""
         self.want_save = False
-        if self.error or self.result is None:
+        if self.error or self.result is None or self.result_mask is None or self.result_meta is None:
             self.msg = f"not saved, dewarp failed: {self.error}"
             return
         flat = self.path.parent / "flat"
@@ -238,6 +244,11 @@ class Editor:
         png = flat / (self.path.stem + ".png")
         dst = png if png.exists() else flat / (self.path.stem + ".jpg")
         imwrite(dst, self.result, [cv2.IMWRITE_PNG_COMPRESSION, 3] if dst == png else [cv2.IMWRITE_JPEG_QUALITY, 95])
+        (flat / "meta").mkdir(exist_ok=True)
+        meta = dict(self.result_meta, page=self.path.stem, source=self.path.name)
+        meta["status"] = status(meta)
+        imwrite(flat / "meta" / (self.path.stem + ".mask.png"), self.result_mask)
+        (flat / "meta" / (self.path.stem + ".json")).write_text(json.dumps(meta, indent=1), encoding="utf-8")
         self.write()
         copy = flat / (self.path.stem + ".hints.json")
         if self.hint_path.exists():
@@ -245,7 +256,7 @@ class Editor:
         elif copy.exists():                # no hints were used
             copy.unlink()
         self.saved_key = self.result_key
-        self.msg = f"saved flat/{dst.name}" + (f" + flat/{copy.name}" if copy.exists() else "")
+        self.msg = f"saved flat/{dst.name} + meta" + (f" + flat/{copy.name}" if copy.exists() else "")
 
     # ---- view -----------------------------------------------------------------
     def pane(self, sx):

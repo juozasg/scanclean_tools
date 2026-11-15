@@ -78,8 +78,10 @@ the tool.
 
    The right pane shows the dewarped page for the current hints and updates a moment after
    every change. Each pane has its own zoom and pan; wheel, `+`/`-`, `f` and right-drag act on
-   the pane under the mouse. `s` saves the dewarped page as `flat/<page>.jpg` (overwriting it)
-   and copies the hints that produced it to `flat/<page>.hints.json`. It writes no metadata. Follow a bent line with several clicks; a
+   the pane under the mouse. `s` saves the dewarped page exactly as step 1 would:
+   `flat/<page>.jpg` with its `flat/meta/<page>.json` and `flat/meta/<page>.mask.png` (the mask
+   is the crop quad when one is marked), all overwritten. The hints that produced it are copied
+   to `flat/<page>.hints.json`. Follow a bent line with several clicks; a
    straight-looking line needs only its two ends.
 
 5. **Redo only those pages** (the PDF is rebuilt from all pages)
