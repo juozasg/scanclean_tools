@@ -30,7 +30,7 @@ Other keys
                  is the crop quad when one is marked), all overwritten; the hints are saved too
     u / Backspace  undo last point, or last finished item
     DEL (or 0)   remove all hints of this photo
-    n / p        next / previous photo (hints are saved automatically)
+    n / p        next / previous photo (hints are saved automatically); also Right / Left arrow
     Esc          cancel the item being marked (its points are dropped)
     q            save and quit
 
@@ -64,12 +64,14 @@ NAME = {"h": "HORIZONTAL line", "v": "VERTICAL line", "r": "RECTANGLE (2 corners
         "x": "IGNORE box (2 clicks)", "c": "CROP quad (4 corners)", "e": "EDIT (move points)"}
 NEED = {"r": 2, "x": 2, "c": 4}
 DOUBLE_S, DOUBLE_PX = 0.4, 6       # a second click this soon and this close is a double click
+ARROW_LEFT = (0x250000, 65361, 63234, 2424832)      # Windows, Linux (GTK / Qt), macOS
+ARROW_RIGHT = (0x270000, 65363, 63235, 2555904)
 PICK_PX = 10                       # edit mode: how close (window px) a click must be to a point
 EDIT_COL = (255, 255, 255)
 OPS = [("Horizontal", "h", "h"), ("Vertical", "v", "v"), ("Rectangle", "r", "r"), ("Ignore", "x", "x"),
        ("Crop", "c", "c"), ("Edit", "e", "e"), ("Finish", "Enter", None), ("Cancel", "Esc", None), ("Undo", "u", None),
        ("Guides", "g", None), ("List", "l", None), ("Fit", "f", None), ("Zoom", "+/-", None),
-       ("Clear", "0", None), ("Save", "s", None), ("Next", "n", None), ("Prev", "p", None),
+       ("Clear", "0", None), ("Save", "s", None), ("Next", "n/->", None), ("Prev", "p/<-", None),
        ("Quit", "q", None)]
 MAC = sys.platform == "darwin"
 BAR_H = 26                                 # status bar at the top of the window
@@ -432,6 +434,12 @@ class Editor:
 
     def key(self, k):
         """Returns 'next', 'prev', 'quit' or None."""
+        if k in ARROW_LEFT:
+            k = ord("p")
+        elif k in ARROW_RIGHT:
+            k = ord("n")
+        elif k > 0xFF and (k & 0xFF) not in (8, 127):  # other special keys: their low byte is not a letter
+            k = 0 if k not in (0x2E0000, 65535, 3014656) else k
         ch = chr(k & 0xFF).lower() if 0 <= (k & 0xFF) < 128 else ""
         if ch in ("h", "v", "r", "x", "c", "e"):
             self.drop_grab()
