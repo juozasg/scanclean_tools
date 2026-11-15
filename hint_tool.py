@@ -242,7 +242,7 @@ class Editor:
     def render(self):
         w, h = self.win
         src, k = (self.img, 1.0) if self.z > 0.3 else (self.small, 0.25)
-        M = np.float32([[self.z / k, 0, -self.ox * self.z], [0, self.z / k, -self.oy * self.z]])
+        M = np.array([[self.z / k, 0, -self.ox * self.z], [0, self.z / k, -self.oy * self.z]], dtype=np.float32)
         vis = cv2.warpAffine(src, M, (w, h), flags=cv2.INTER_LINEAR, borderValue=(60, 60, 60))
         if self.auto:
             for kind, pts in self.auto:
@@ -255,8 +255,8 @@ class Editor:
         cv2.rectangle(vis, (0, 0), (w, 26), (30, 30, 30), -1)
         n = {k: sum(it[0] == k for it in self.items) for k in "hvrxc"}
         txt = (f"{self.path.name}   mode: {NAME[self.mode]}   | hints: {n['h']} H, {n['v']} V, {n['r']} rect, "
-               f"{n['x']} ignore, {n['c']} crop |  h v r x c  ENTER=finish line  u=undo  g=auto guides  "
-               f"n/p=next/prev  q=quit   {self.msg}")
+                f"{n['x']} ignore, {n['c']} crop |  h v r x c  ENTER=finish line  u=undo  g=auto guides  "
+                f"n/p=next/prev  q=quit   {self.msg}")
         cv2.putText(vis, txt, (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
         return vis
 
