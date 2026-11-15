@@ -134,7 +134,7 @@ class Polish:
         self.c0 = (np.asarray(lo, float) + np.asarray(hi, float)) / 2
         self.half = np.maximum((np.asarray(hi, float) - np.asarray(lo, float)) / 2, 1.0)
         self.dm, self.dc = deg_main, deg_cross
-        self.coef = {0: None, 1: None}       # displacement of x (0) and y (1)
+        self.coef: dict[int, np.ndarray | None] = {0: None, 1: None}   # displacement of x (0), y (1)
         self.qlo, self.qhi = np.full(2, -1.0), np.full(2, 1.0)
 
     def _basis(self, P, axis):
@@ -216,7 +216,7 @@ def build_maps(sheet, polish, x0, y0, w, h, step=8):
     P = polish.inverse(Q) if polish is not None else Q
     S = sheet.to_photo(P).reshape(len(gy), len(gx), 2).astype(np.float32)
     # exact bilinear upsampling of the coarse grid
-    M = np.float32([[1 / step, 0, 0], [0, 1 / step, 0]])
+    M = np.array([[1 / step, 0, 0], [0, 1 / step, 0]], dtype=np.float32)
     full = cv2.warpAffine(S, M, (w, h), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
                           borderMode=cv2.BORDER_REPLICATE)
     return full[:, :, 0], full[:, :, 1]

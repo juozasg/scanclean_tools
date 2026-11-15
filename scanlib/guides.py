@@ -28,14 +28,14 @@ def text_is_rotated(ink, h):
     Characters are closer to their neighbours within a line than to the lines above / below,
     so the direction to the nearest neighbouring blob tells the reading direction.
     """
-    from scipy.spatial import cKDTree
-    n, _, stats, cen = cv2.connectedComponentsWithStats(ink, 8)
+    from scipy.spatial import KDTree
+    n, _, stats, cen = cv2.connectedComponentsWithStats(ink, connectivity=8)
     hh, ww = stats[1:, cv2.CC_STAT_HEIGHT], stats[1:, cv2.CC_STAT_WIDTH]
     ok = (np.maximum(hh, ww) > 0.5 * h) & (np.maximum(hh, ww) < 2.5 * h)
     c = cen[1:][ok]
     if len(c) < 40:
         return False
-    d, j = cKDTree(c).query(c, k=2)
+    d, j = (np.asarray(a) for a in KDTree(c).query(c, k=2))   # distances, indices: N x 2
     v = c[j[:, 1]] - c
     near = d[:, 1] < 2.5 * h
     ang = np.abs(np.arctan2(v[near, 1], v[near, 0]))
@@ -62,7 +62,7 @@ def trace_rules(n, valid, h, min_len):
     line = (E > 0.07).astype(np.uint8)
     line = cv2.dilate(line, np.ones((1, L), np.uint8))                      # undo the erosion
     line = cv2.morphologyEx(line, cv2.MORPH_CLOSE, np.ones((1, odd(1.2 * h)), np.uint8))
-    cnt, lab, stats, _ = cv2.connectedComponentsWithStats(line, 8)
+    cnt, lab, stats, _ = cv2.connectedComponentsWithStats(line, connectivity=8)
     out, rule_mask = [], np.zeros((H, W), np.uint8)
     for i in range(1, cnt):
         x, y, w, hh, area = stats[i]
@@ -101,7 +101,7 @@ def trace_text_lines(ink, h, min_len_h=7.0):
     """Text lines as ridges of the horizontally smeared ink mask -> list of dicts."""
     H, W = ink.shape
     # drop blobs that are not characters (figure fills, thick frames)
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(ink, 8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
     big = (stats[:, cv2.CC_STAT_HEIGHT] > 3.5 * h) | (stats[:, cv2.CC_STAT_WIDTH] > 8 * h)
     big[0] = False
     txt = ink.copy()
@@ -114,7 +114,7 @@ def trace_text_lines(ink, h, min_len_h=7.0):
         return [], 0.0
     thr = 0.28 * np.percentile(B[cand], 90)
     ridge = (cand & (B > thr)).astype(np.uint8)
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(ridge, 8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(ridge, connectivity=8)
     lines = []
     for i in range(1, n):
         x, y, w, hh, area = stats[i]

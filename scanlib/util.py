@@ -21,7 +21,10 @@ def list_images(src, only=None):
 
 def imread(path, flags=cv2.IMREAD_COLOR):
     """Image reader that also works with non-ASCII paths on Windows."""
-    return cv2.imdecode(np.frombuffer(Path(path).read_bytes(), np.uint8), flags)
+    img = cv2.imdecode(np.frombuffer(Path(path).read_bytes(), np.uint8), flags)
+    if img is None:
+        raise IOError(f"cannot read image {path}")
+    return img
 
 
 def imwrite(path, img, params=()):

@@ -71,7 +71,7 @@ def remove_edge_dirt(out, outside, h_px):
     near = cv2.dilate(outside.astype(np.uint8), np.ones((k, k), np.uint8))
     reach = cv2.dilate(outside.astype(np.uint8), np.ones((odd(7 * h_px), odd(7 * h_px)), np.uint8))
     ink = (out < 160).astype(np.uint8)
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(ink, 8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
     touch = np.zeros(n, bool)
     touch[np.unique(lab[(near > 0) & (ink > 0)])] = True
     far = np.zeros(n, bool)
@@ -93,10 +93,10 @@ def content_box(out, core, h_px, margin):
     hs = h_px * sc
     dens = cv2.blur(small.astype(np.float32), (odd(2 * hs), odd(2 * hs)))
     solid = ((small > 0) & (dens > 0.04)).astype(np.uint8)
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(cv2.dilate(solid, np.ones((odd(hs), odd(2 * hs)), np.uint8)), 8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(cv2.dilate(solid, np.ones((odd(hs), odd(2 * hs)), np.uint8)), connectivity=8)
     keep = np.zeros(n, bool)
     keep[1:] = (stats[1:, cv2.CC_STAT_WIDTH] > 1.2 * hs) & (stats[1:, cv2.CC_STAT_HEIGHT] > 0.8 * hs)
-    ys, xs = np.where(keep[lab] & (solid > 0))
+    ys, xs = np.where(keep[np.asarray(lab, np.intp)] & (solid > 0))
     x0, y0, x1, y1 = core
     if len(xs):
         x0, y0 = min(x0, xs.min() / sc), min(y0, ys.min() / sc)

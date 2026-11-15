@@ -29,7 +29,8 @@ def main(argv=None):
         sys.exit("no images found")
     out = Path(args.out) if args.out else src.with_suffix(".pdf")
     lay = img2pdf.get_fixed_dpi_layout_fun((args.dpi, args.dpi))
-    out.write_bytes(img2pdf.convert([p.read_bytes() for p in files], layout_fun=lay))
+    with open(out, "wb") as f:
+        img2pdf.convert([p.read_bytes() for p in files], layout_fun=lay, outputstream=f)
     print(f"{len(files)} pages -> {out}")
 
 

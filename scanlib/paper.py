@@ -72,10 +72,10 @@ def find_paper_mask(bgr_w):
     s_ref = np.median(s[bright])
     paper = ((v_cl > 0.42 * ref) & (s < s_ref + 60)).astype(np.uint8)
     paper = cv2.morphologyEx(paper, cv2.MORPH_OPEN, np.ones((k, k), np.uint8))
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(paper, 8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(paper, connectivity=8)
     keep = np.zeros(n, bool)
     keep[1:] = stats[1:, cv2.CC_STAT_AREA] > 0.02 * paper.size
-    m = keep[lab].astype(np.uint8)
+    m = keep[np.asarray(lab, np.intp)].astype(np.uint8)
     cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     out = np.zeros_like(m)
     cv2.drawContours(out, cnts, -1, 1, -1)
@@ -83,7 +83,7 @@ def find_paper_mask(bgr_w):
 
 
 def char_height(ink):
-    n, _, stats, _ = cv2.connectedComponentsWithStats(ink, 8)
+    n, _, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
     hh = stats[1:, cv2.CC_STAT_HEIGHT]
     ww = stats[1:, cv2.CC_STAT_WIDTH]
     ok = (hh >= 4) & (hh <= 80) & (ww >= 2) & (ww <= 80) & (stats[1:, cv2.CC_STAT_AREA] >= 8)
