@@ -2,25 +2,25 @@
 """
 hint_tool.py - mark geometric hints on page photos for step1_dewarp.py.
 
-  python hint_tool.py PHOTO_DIR                 # step through all photos
-  python hint_tool.py PHOTO_DIR --only 157 164  # only the pages scanclean flagged
+    python hint_tool.py PHOTO_DIR                 # step through all photos
+    python hint_tool.py PHOTO_DIR --only 157 164  # only the pages scanclean flagged
 
 What you can mark (press the key, then click on the photo):
-  h   line that is HORIZONTAL on the real page (text baseline, table rule, figure frame ...)
-  v   line that is VERTICAL on the real page   (column rule, text margin, figure frame ...)
-      click 2 or more points ALONG the line - follow its curve if the page is bent -
-      then press ENTER (or SPACE) to finish the line.
-  r   rectangle: click the 4 corners of a printed rectangle (table / figure frame), any order
-  x   ignore box: 2 clicks; automatic guides inside it are thrown away (messy figure)
-  c   crop box:   2 clicks; the output page is cropped to this area
+    h   line that is HORIZONTAL on the real page (text baseline, table rule, figure frame ...)
+    v   line that is VERTICAL on the real page   (column rule, text margin, figure frame ...)
+        click 2 or more points ALONG the line - follow its curve if the page is bent -
+        then press ENTER (or SPACE) to finish the line.
+    r   rectangle: click the 4 corners of a printed rectangle (table / figure frame), any order
+    x   ignore box: 2 clicks; automatic guides inside it are thrown away (messy figure)
+    c   crop box:   2 clicks; the output page is cropped to this area
 
 Other keys
-  g            show / hide the guides step 1 finds automatically (takes a few seconds)
-  wheel, + -   zoom at the mouse position        right-drag   pan        f   fit to window
-  u / Backspace  undo last point, or last finished item
-  DEL (or 0)   remove all hints of this photo
-  n / p        next / previous photo (hints are saved automatically)
-  q / Esc      save and quit
+    g            show / hide the guides step 1 finds automatically (takes a few seconds)
+    wheel, + -   zoom at the mouse position        right-drag   pan        f   fit to window
+    u / Backspace  undo last point, or last finished item
+    DEL (or 0)   remove all hints of this photo
+    n / p        next / previous photo (hints are saved automatically)
+    q / Esc      save and quit
 
 Hints are stored next to each photo as <name>.hints.json (photo pixel coordinates).
 """
