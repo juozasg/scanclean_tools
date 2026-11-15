@@ -74,7 +74,12 @@ the tool.
    `Enter` finishes a line, `Esc` cancels the item being marked, `u` undoes, `g` shows the
    automatic guides, mouse wheel zooms, right-drag pans, `n`/`p` next/previous photo, `q` quits.
    The list of hints at the top left shows the newest first: hover a line to highlight that
-   hint, click its x to delete it, click the title (or press `l`) to fold the list. Follow a bent line with several clicks; a
+   hint, click its x to delete it, click the title (or press `l`) to fold the list.
+
+   The right pane shows the dewarped page for the current hints and updates a moment after
+   every change. Each pane has its own zoom and pan; wheel, `+`/`-`, `f` and right-drag act on
+   the pane under the mouse. `s` saves the dewarped page as `flat/<page>.jpg` (overwriting it)
+   and copies the hints that produced it to `flat/<page>.hints.json`. It writes no metadata. Follow a bent line with several clicks; a
    straight-looking line needs only its two ends.
 
 5. **Redo only those pages** (the PDF is rebuilt from all pages)

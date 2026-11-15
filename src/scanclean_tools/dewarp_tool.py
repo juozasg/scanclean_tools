@@ -4,6 +4,9 @@ dewarp-tool - mark geometric hints on page photos for step 1 (scanclean-dewarp).
     dewarp-tool PHOTO_DIR                 # step through all photos
     dewarp-tool PHOTO_DIR --only 157 164  # only the pages step 1 flagged
 
+Two panes: the photo with your hints on the left, the dewarped page (step 1 run with the
+current hints) on the right. The right pane follows every change of the hints after a moment.
+
 What you can mark (press the key, then click on the photo):
     h   line that is HORIZONTAL on the real page (text baseline, table rule, figure frame ...)
     v   line that is VERTICAL on the real page   (column rule, text margin, figure frame ...)
@@ -15,7 +18,10 @@ What you can mark (press the key, then click on the photo):
 
 Other keys
     g            show / hide the guides step 1 finds automatically (takes a few seconds)
-    wheel, + -   zoom at the mouse position        right-drag   pan        f   fit to window
+    wheel, + -   zoom at the mouse position        right-drag   pan        f   fit to the pane
+                 (each pane has its own zoom and pan; these act on the pane under the mouse)
+    s            save the dewarped page as PHOTO_DIR/flat/<name>.jpg (overwrites it) and copy the
+                 hints that produced it to PHOTO_DIR/flat/<name>.hints.json; no metadata is written
     u / Backspace  undo last point, or last finished item
     DEL (or 0)   remove all hints of this photo
     n / p        next / previous photo (hints are saved automatically)
@@ -32,14 +38,19 @@ Hints are stored next to each photo as <name>.hints.json (photo pixel coordinate
 import argparse
 import json
 import math
+import shutil
 import sys
+import threading
+import time
 from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image, ImageOps
 
+from .scanlib.dewarp import dewarp_page
+from .scanlib.guides import find_guides
 from .scanlib.hints import crop_points, order_quad
+from .scanlib.util import imwrite, load_photo
 
 IMG_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 COL = {"h": (40, 40, 255), "v": (255, 110, 0), "r": (0, 150, 255), "x": (120, 120, 120),
@@ -50,7 +61,8 @@ NEED = {"r": 4, "x": 2, "c": 4}
 OPS = [("Horizontal", "h", "h"), ("Vertical", "v", "v"), ("Rectangle", "r", "r"), ("Ignore", "x", "x"),
        ("Crop", "c", "c"), ("Finish", "Enter", None), ("Cancel", "Esc", None), ("Undo", "u", None),
        ("Guides", "g", None), ("List", "l", None), ("Fit", "f", None), ("Zoom", "+/-", None),
-       ("Clear", "0", None), ("Next", "n", None), ("Prev", "p", None), ("Quit", "q", None)]
+       ("Clear", "0", None), ("Save", "s", None), ("Next", "n", None), ("Prev", "p", None),
+       ("Quit", "q", None)]
 MAC = sys.platform == "darwin"
 BAR_H = 26                                 # status bar at the top of the window
 PANEL_W, HEAD_H, ROW_H, DEL_W = 190, 24, 22, 26     # list of hints: width, title, row, x button
@@ -63,9 +75,39 @@ def wheel_delta(flags):
     return d - 0x10000 if d >= 0x8000 else d
 
 
-def load(path):
-    im = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
-    return cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2BGR)
+class View:
+    """Zoom and pan of one image pane. The pane is `w` window pixels wide and starts at window
+    x = `x0`; it is as high as the window (the top bar covers its first BAR_H rows)."""
+
+    def __init__(self, x0, w, h):
+        self.x0, self.w, self.h = x0, w, h
+        self.z, self.ox, self.oy = 1.0, 0.0, 0.0       # zoom, image point shown at the pane's top left
+
+    def fit(self, W, H):
+        """Show a whole W x H image."""
+        self.z = min(self.w / W, (self.h - BAR_H - 4) / H)
+        self.ox = -(self.w / self.z - W) / 2
+        self.oy = -(BAR_H + 2) / self.z
+
+    def to_img(self, sx, sy):
+        """Window position -> image point."""
+        return (sx - self.x0) / self.z + self.ox, sy / self.z + self.oy
+
+    def to_scr(self, p):
+        """Image point -> window position."""
+        return int(round((p[0] - self.ox) * self.z)) + self.x0, int(round((p[1] - self.oy) * self.z))
+
+    def zoom(self, factor, at):
+        """Zoom so that the image point at window position `at` stays where it is."""
+        ix, iy = self.to_img(*at)
+        self.z = float(np.clip(self.z * factor, 0.05, 8.0))
+        self.ox, self.oy = ix - (at[0] - self.x0) / self.z, iy - at[1] / self.z
+
+    def draw(self, img, small):
+        """The pane as an image; `small` is a quarter-size copy of `img` for zoomed-out views."""
+        src, k = (img, 1.0) if self.z > 0.3 else (small, 0.25)
+        M = np.array([[self.z / k, 0, -self.ox * self.z], [0, self.z / k, -self.oy * self.z]], dtype=np.float32)
+        return cv2.warpAffine(src, M, (self.w, self.h), flags=cv2.INTER_LINEAR, borderValue=(60, 60, 60))
 
 
 class Editor:
@@ -75,10 +117,14 @@ class Editor:
 
     def __init__(self, path, win=(1500, 950)):
         self.path = Path(path)
-        self.img = load(self.path)
+        self.img, f35 = load_photo(self.path)
+        self.f35 = f35 or 26.0             # same focal length as step 1 uses
         self.small = cv2.resize(self.img, None, fx=0.25, fy=0.25, interpolation=cv2.INTER_AREA)
         self.H, self.W = self.img.shape[:2]
         self.win = win
+        pw = win[0] // 2
+        self.view = View(0, pw, win[1])                    # left pane: the photo with the hints
+        self.rview = View(pw, win[0] - pw, win[1])         # right pane: the dewarped page
         self.mode = "h"
         self.cur = []                      # points of the item being drawn
         self.items = []                    # finished items: (kind, [[x, y], ...])
@@ -88,7 +134,18 @@ class Editor:
         self.hover = None                  # index of the hint whose list line is under the mouse
         self.scroll = 0.0                  # first visible line of the list
         self.msg = ""
-        self.fit()
+        # dewarped page, computed in a background thread
+        self.found = None                  # result of find_guides for this photo (hints do not change it)
+        self.job = None                    # the running thread
+        self.done = None                   # its result: (hints key, image or None, error or None)
+        self.result = None                 # dewarped page shown on the right ...
+        self.result_small = None
+        self.result_key = None             # ... and the hints it was made with
+        self.error = None
+        self.fresh = False                 # does it match the current hints?
+        self.want_save = False             # s was pressed: save as soon as it does
+        self.saved_key = None
+        self.view.fit(self.W, self.H)
         self.read()
 
     # ---- file -----------------------------------------------------------------
@@ -110,7 +167,8 @@ class Editor:
         if crop is not None:
             self.items.append(("c", crop.tolist()))
 
-    def write(self):
+    def hints(self):
+        """The finished hints, as they are stored in <name>.hints.json."""
         d = {"image": self.path.name, "size": [self.W, self.H], "lines": [], "rects": [], "ignore": []}
         for kind, pts in self.items:
             pts = [[round(x, 1), round(y, 1)] for x, y in pts]
@@ -122,28 +180,98 @@ class Editor:
                 d["ignore"].append([pts[0][0], pts[0][1], pts[1][0], pts[1][1]])
             elif kind == "c":
                 d["crop"] = pts
+        return d
+
+    def write(self):
         if self.items:
-            self.hint_path.write_text(json.dumps(d, indent=1), encoding="utf-8")
+            self.hint_path.write_text(json.dumps(self.hints(), indent=1), encoding="utf-8")
         elif self.hint_path.exists():
             self.hint_path.unlink()
 
+    # ---- dewarped page ----------------------------------------------------------
+    def _dewarp(self, key, hints):
+        """Step 1 for this photo with `hints`; runs in a background thread."""
+        try:
+            if self.found is None:
+                self.found = find_guides(self.img)
+            res = dewarp_page(self.img, hints, self.f35, found=self.found)
+            self.done = (key, res["image"], None)
+        except Exception as e:             # the tool must keep working
+            self.done = (key, None, str(e))
+
+    def poll(self):
+        """Keep the dewarped page in step with the hints; called for every frame."""
+        hints = self.hints()
+        key = json.dumps(hints, sort_keys=True)
+        if self.done is not None:
+            (self.result_key, image, self.error), self.done = self.done, None
+            if image is not None:
+                first = self.result is None
+                self.result = image
+                self.result_small = cv2.resize(image, None, fx=0.25, fy=0.25, interpolation=cv2.INTER_AREA)
+                if first:
+                    self.rview.fit(image.shape[1], image.shape[0])
+        if key != self.result_key and not (self.job is not None and self.job.is_alive()):
+            self.job = threading.Thread(target=self._dewarp, args=(key, hints), daemon=True)
+            self.job.start()
+        self.fresh = key == self.result_key
+        if self.want_save and self.fresh:
+            self.save_flat()
+
+    def wait(self):
+        """Block until the dewarped page matches the current hints."""
+        self.poll()
+        while not self.fresh:
+            if self.job is not None:
+                self.job.join()
+            self.poll()
+
+    def save_flat(self):
+        """Write the dewarped page to flat/<name>.jpg (or over an existing .png) next to the
+        photos, and copy the hints it was made with to flat/<name>.hints.json."""
+        self.want_save = False
+        if self.error or self.result is None:
+            self.msg = f"not saved, dewarp failed: {self.error}"
+            return
+        flat = self.path.parent / "flat"
+        flat.mkdir(exist_ok=True)
+        png = flat / (self.path.stem + ".png")
+        dst = png if png.exists() else flat / (self.path.stem + ".jpg")
+        imwrite(dst, self.result, [cv2.IMWRITE_PNG_COMPRESSION, 3] if dst == png else [cv2.IMWRITE_JPEG_QUALITY, 95])
+        self.write()
+        copy = flat / (self.path.stem + ".hints.json")
+        if self.hint_path.exists():
+            shutil.copyfile(self.hint_path, copy)
+        elif copy.exists():                # no hints were used
+            copy.unlink()
+        self.saved_key = self.result_key
+        self.msg = f"saved flat/{dst.name}" + (f" + flat/{copy.name}" if copy.exists() else "")
+
     # ---- view -----------------------------------------------------------------
-    def fit(self):
-        self.z = min(self.win[0] / self.W, (self.win[1] - 30) / self.H)
-        self.ox = -(self.win[0] / self.z - self.W) / 2
-        self.oy = -30 / self.z
+    def pane(self, sx):
+        """The view of the pane at window x."""
+        return self.rview if sx >= self.rview.x0 else self.view
+
+    def fit(self, view=None):
+        """Fit the image of a pane (default: the pane under the mouse) to that pane."""
+        view = view or self.pane(self.mouse[0])
+        if view is self.view:
+            view.fit(self.W, self.H)
+        elif self.result is not None:
+            view.fit(self.result.shape[1], self.result.shape[0])
 
     def to_img(self, sx, sy):
-        return sx / self.z + self.ox, sy / self.z + self.oy
+        """Window position -> photo pixel (left pane)."""
+        return self.view.to_img(sx, sy)
 
     def to_scr(self, p):
-        return int(round((p[0] - self.ox) * self.z)), int(round((p[1] - self.oy) * self.z))
+        """Photo pixel -> window position (left pane)."""
+        return self.view.to_scr(p)
 
     def zoom(self, factor, at=None):
-        sx, sy = at or self.mouse
-        ix, iy = self.to_img(sx, sy)
-        self.z = float(np.clip(self.z * factor, 0.05, 8.0))
-        self.ox, self.oy = ix - sx / self.z, iy - sy / self.z
+        """Zoom the pane at window position `at` (default: under the mouse)."""
+        at = at or self.mouse
+        self.pane(at[0]).zoom(factor, at)
 
     # ---- list of hints ----------------------------------------------------------
     def list_rows(self):
@@ -182,8 +310,8 @@ class Editor:
     # ---- editing --------------------------------------------------------------
     def click(self, sx, sy):
         x, y = self.to_img(sx, sy)
-        if not (0 <= x < self.W and 0 <= y < self.H):
-            return
+        if self.pane(sx) is not self.view or not (0 <= x < self.W and 0 <= y < self.H):
+            return                         # marks go on the photo only
         self.cur.append([x, y])
         if self.mode in NEED and len(self.cur) == NEED[self.mode]:
             self.finish()
@@ -209,9 +337,9 @@ class Editor:
             self.auto = None
             return
         try:
-            from .scanlib.guides import find_guides
-            guides, _ = find_guides(self.img)
-            self.auto = [(g.kind, g.pts) for g in guides]
+            if self.found is None:
+                self.found = find_guides(self.img)
+            self.auto = [(g.kind, g.pts) for g in self.found[0]]
             self.msg = f"{len(self.auto)} automatic guides (thin lines)"
         except Exception as e:             # the tool must keep working without it
             self.auto = None
@@ -239,17 +367,18 @@ class Editor:
             self.zoom(1.3)
         elif ch in ("-", "_"):
             self.zoom(1 / 1.3)
-        elif ch == "n":
+        elif ch == "s":                          # save the dewarped page once it is up to date
             self.finish()
-            return "next"
-        elif ch == "p":
-            self.finish()
-            return "prev"
+            self.want_save = True
+            self.msg = "saving ..."
+            self.poll()
         elif (k & 0xFF) == 27:                   # Esc: drop the item being marked
             self.cur = []
-        elif ch == "q":
+        elif ch in ("n", "p", "q"):
             self.finish()
-            return "quit"
+            if self.want_save:                   # a save is still waiting for the dewarp
+                self.wait()
+            return {"n": "next", "p": "prev", "q": "quit"}[ch]
         return None
 
     def on_mouse(self, event, x, y, flags, _=None):
@@ -261,7 +390,7 @@ class Editor:
                 amount = max(-60, min(60, y)) if MAC else max(-240, min(240, wheel_delta(flags)))
                 if self.list_hit(*at) is not None:           # over the list: scroll it
                     self.scroll -= amount / ROW_H if MAC else amount / 120
-                elif amount:
+                elif amount:                                 # zoom the pane under the mouse
                     self.zoom(math.exp(0.006 * amount if MAC else 0.22 * amount / 120), at)
             return
         self.mouse = (x, y)
@@ -274,13 +403,14 @@ class Editor:
             elif hit is None:
                 self.click(x, y)
         elif event in (cv2.EVENT_RBUTTONDOWN, cv2.EVENT_MBUTTONDOWN):
-            if hit is None:
-                self.drag = (x, y, self.ox, self.oy)
+            if hit is None:                                  # pan the pane the drag starts in
+                view = self.pane(x)
+                self.drag = (view, x, y, view.ox, view.oy)
         elif event in (cv2.EVENT_RBUTTONUP, cv2.EVENT_MBUTTONUP):
             self.drag = None
         elif event == cv2.EVENT_MOUSEMOVE and self.drag:
-            x0, y0, ox, oy = self.drag
-            self.ox, self.oy = ox - (x - x0) / self.z, oy - (y - y0) / self.z
+            view, x0, y0, ox, oy = self.drag
+            view.ox, view.oy = ox - (x - x0) / view.z, oy - (y - y0) / view.z
 
     # ---- drawing --------------------------------------------------------------
     def _shape(self, vis, kind, pts, col, closed_ok=True, width=2):
@@ -334,10 +464,8 @@ class Editor:
             cv2.putText(vis, f"... {hidden} more (scroll)", (x0 + 9, end - 7), font, 0.42, (170, 170, 170), 1, cv2.LINE_AA)
 
     def render(self):
-        w, h = self.win
-        src, k = (self.img, 1.0) if self.z > 0.3 else (self.small, 0.25)
-        M = np.array([[self.z / k, 0, -self.ox * self.z], [0, self.z / k, -self.oy * self.z]], dtype=np.float32)
-        vis = cv2.warpAffine(src, M, (w, h), flags=cv2.INTER_LINEAR, borderValue=(60, 60, 60))
+        self.poll()
+        vis = self.view.draw(self.img, self.small)           # left pane; the right one is added below
         if self.auto:
             for kind, pts in self.auto:
                 s = np.array([self.to_scr(p) for p in pts], np.int32)
@@ -353,10 +481,36 @@ class Editor:
             self._shape(vis, kind, pts, COL[kind], width=4)
         if self.cur:
             self._shape(vis, self.mode, self.cur + [list(self.to_img(*self.mouse))], COL["cur"], closed_ok=False)
+        vis = np.hstack([vis, self._draw_result()])
+        cv2.line(vis, (self.rview.x0, BAR_H), (self.rview.x0, self.win[1]), (30, 30, 30), 2)
         self._draw_bar(vis)
         self._draw_list(vis, hit)
         self._draw_status(vis)
         return vis
+
+    def _draw_result(self):
+        """Right pane: the dewarped page for the current hints, and what state it is in."""
+        v = self.rview
+        if self.result is None:
+            pane = np.full((v.h, v.w, 3), 60, np.uint8)
+        else:
+            pane = v.draw(self.result, self.result_small)
+        dots = "." * (1 + int(time.time() * 2) % 3)
+        if self.error and self.fresh:
+            txt = f"dewarp failed: {self.error}"
+        elif self.result is None:
+            txt = "dewarping " + dots
+        elif not self.fresh:
+            txt = "updating " + dots
+        else:
+            txt = f"dewarped  {self.result.shape[1]} x {self.result.shape[0]}"
+            if self.saved_key == self.result_key:
+                txt += "   saved"
+        font, fs = cv2.FONT_HERSHEY_SIMPLEX, 0.45
+        (tw, th), _ = cv2.getTextSize(txt, font, fs, 1)
+        cv2.rectangle(pane, (0, v.h - th - 12), (tw + 16, v.h), (30, 30, 30), -1)
+        cv2.putText(pane, txt, (8, v.h - 7), font, fs, (235, 235, 235), 1, cv2.LINE_AA)
+        return pane
 
     def _draw_bar(self, vis):
         """Top bar: every operation as 'Word key', key in bold green, current mode highlighted."""
@@ -419,7 +573,7 @@ def main(argv=None):
         i += 1 if act == "next" else -1
         i = max(i, 0)
     cv2.destroyAllWindows()
-    print("hints saved next to the photos (*.hints.json). Now re-run step 1 (or run_all.sh) for these pages.")
+    print("hints saved next to the photos (*.hints.json). Pages you did not save with s still need step 1.")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import math
 import cv2
 import numpy as np
 
-from .guides import find_guides
+from .guides import Guide, find_guides
 from .hints import apply_hints
 from .layout import page_span
 from .sheet import Polish, Sheet, build_maps, guide_rms, straightness
@@ -64,15 +64,19 @@ def flat_frame(sheet, polish, size):
     return x0, y0, int(math.ceil(hi[0] - lo[0])), int(math.ceil(hi[1] - lo[1]))
 
 
-def dewarp_page(bgr, hints=None, focal35=26.0, scale=1.0, work=2000, use_polish=True):
+def dewarp_page(bgr, hints=None, focal35=26.0, scale=1.0, work=2000, use_polish=True, found=None):
     """Photo -> dict with
          image   flat colour page (only resampled, colours untouched), cropped to the page
          mask    uint8, 255 where the pixel belongs to this page (not desk / gutter / facing page)
          meta    text height, core box, trim flag, fit quality  (JSON-serialisable)
          guides, sheet, polish, box   for debugging (box = crop in flat coordinates)
+    `found` is an earlier result of find_guides(bgr, work) to reuse; it is left unchanged.
     """
     H0, W0 = bgr.shape[:2]
-    guides, info = find_guides(bgr, work)
+    if found is None:
+        guides, info = find_guides(bgr, work)
+    else:
+        guides, info = [Guide(g.kind, g.pts.copy(), g.src, g.w) for g in found[0]], found[1]
     guides, crop_hint = apply_hints(guides, hints or {})
     sheet, polish, guides, rep = fit_geometry(bgr, guides, info["h"], focal35, use_polish)
 
