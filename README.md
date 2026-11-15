@@ -65,14 +65,15 @@ the tool.
 
    | key | then click | meaning |
    |---|---|---|
-   | `r` | 4 corners of a printed frame (any order) | fastest hint: 2 horizontal + 2 vertical lines |
-   | `h` | 2+ points along a line, `Enter` | this line is horizontal on the page |
-   | `v` | 2+ points along a line, `Enter` | this line is vertical on the page |
+   | `r` | 2 opposite corners of a printed frame | fastest hint: 2 horizontal + 2 vertical lines |
+   | `h` | 2+ points along a line, `Enter` or double-click | this line is horizontal on the page |
+   | `v` | 2+ points along a line, `Enter` or double-click | this line is vertical on the page |
    | `x` | 2 corners of a box | ignore automatic guides in here (messy figure) |
    | `c` | 4 corners of the page (any order) | cut the page to this quad |
 
    `Enter` finishes a line, `Esc` cancels the item being marked, `u` undoes, `g` shows the
-   automatic guides, mouse wheel zooms, right-drag pans, `n`/`p` next/previous photo, `q` quits.
+   automatic guides (solid = used, dark dashed = removed by an ignore box, magenta dashed =
+   dropped by the fit as a mis-detection), mouse wheel zooms, right-drag pans, `n`/`p` next/previous photo, `q` quits.
    The list of hints at the top left shows the newest first: hover a line to highlight that
    hint, click its x to delete it, click the title (or press `l`) to fold the list.
 

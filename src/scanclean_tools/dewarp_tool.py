@@ -11,13 +11,16 @@ What you can mark (press the key, then click on the photo):
     h   line that is HORIZONTAL on the real page (text baseline, table rule, figure frame ...)
     v   line that is VERTICAL on the real page   (column rule, text margin, figure frame ...)
         click 2 or more points ALONG the line - follow its curve if the page is bent -
-        then press ENTER (or SPACE) to finish the line.
-    r   rectangle: click the 4 corners of a printed rectangle (table / figure frame), any order
+        then press ENTER (or SPACE), or double-click the last point, to finish the line.
+    r   rectangle: click two opposite corners of a printed rectangle (table / figure frame);
+        the second click finishes it
     x   ignore box: 2 clicks; automatic guides inside it are thrown away (messy figure)
     c   crop: click the 4 corners of the page, any order; the page is cut to this quad
 
 Other keys
-    g            show / hide the guides step 1 finds automatically (takes a few seconds)
+    g            show / hide the guides step 1 finds automatically: thin solid = used,
+                 dark dashed = removed by an ignore box, magenta dashed = dropped by the fit
+                 because the page model could not straighten it (a mis-detection)
     wheel, + -   zoom at the mouse position        right-drag   pan        f   fit to the pane
                  (each pane has its own zoom and pan; these act on the pane under the mouse)
     s            save the dewarped page exactly as step 1 would: PHOTO_DIR/flat/<name>.jpg plus
@@ -50,16 +53,17 @@ import cv2
 import numpy as np
 
 from .scanlib.dewarp import dewarp_page, status
-from .scanlib.guides import find_guides
-from .scanlib.hints import crop_points, order_quad
+from .scanlib.guides import Guide, find_guides
+from .scanlib.hints import apply_hints, crop_points, order_quad
 from .scanlib.util import imwrite, load_photo
 
 IMG_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 COL = {"h": (40, 40, 255), "v": (255, 110, 0), "r": (0, 150, 255), "x": (120, 120, 120),
        "c": (0, 170, 0), "cur": (0, 220, 255)}
-NAME = {"h": "HORIZONTAL line", "v": "VERTICAL line", "r": "RECTANGLE (4 corners)",
+NAME = {"h": "HORIZONTAL line", "v": "VERTICAL line", "r": "RECTANGLE (2 corners)",
         "x": "IGNORE box (2 clicks)", "c": "CROP quad (4 corners)"}
-NEED = {"r": 4, "x": 2, "c": 4}
+NEED = {"r": 2, "x": 2, "c": 4}
+DOUBLE_S, DOUBLE_PX = 0.4, 6       # a second click this soon and this close is a double click
 OPS = [("Horizontal", "h", "h"), ("Vertical", "v", "v"), ("Rectangle", "r", "r"), ("Ignore", "x", "x"),
        ("Crop", "c", "c"), ("Finish", "Enter", None), ("Cancel", "Esc", None), ("Undo", "u", None),
        ("Guides", "g", None), ("List", "l", None), ("Fit", "f", None), ("Zoom", "+/-", None),
@@ -67,6 +71,31 @@ OPS = [("Horizontal", "h", "h"), ("Vertical", "v", "v"), ("Rectangle", "r", "r")
        ("Quit", "q", None)]
 MAC = sys.platform == "darwin"
 BAR_H = 26                                 # status bar at the top of the window
+IGNORED_COL, UNFIT_COL = (40, 40, 40), (255, 0, 255)    # guides dropped by an ignore box / by the fit
+
+
+def guide_key(g):
+    """Identifies an automatic guide after an ignore box may have trimmed some of its points."""
+    return g.kind, len(g.pts), tuple(np.round(g.pts[0], 1)), tuple(np.round(g.pts[-1], 1))
+
+
+def dashed(vis, pts, col, dash=7, gap=5, width=2):
+    """Dashed polyline through window points."""
+    pts = np.asarray(pts, np.float64)
+    seg = np.diff(pts, axis=0)
+    ln = np.hypot(seg[:, 0], seg[:, 1])
+    pos, on = 0.0, True
+    for a, d, n in zip(pts[:-1], seg, ln):
+        t = 0.0
+        while t < n:
+            step = min((dash if on else gap) - pos, n - t)
+            if on:
+                p, q = a + d * t / n, a + d * (t + step) / n
+                cv2.line(vis, (int(p[0]), int(p[1])), (int(q[0]), int(q[1])), col, width, cv2.LINE_AA)
+            t += step
+            pos += step
+            if pos >= (dash if on else gap):
+                pos, on = 0.0, not on
 PANEL_W, HEAD_H, ROW_H, DEL_W = 190, 24, 22, 26     # list of hints: width, title, row, x button
 
 
@@ -130,8 +159,9 @@ class Editor:
         self.mode = "h"
         self.cur = []                      # points of the item being drawn
         self.items = []                    # finished items: (kind, [[x, y], ...])
-        self.auto = None                   # automatic guides (list of (kind, pts)) when shown
+        self.auto = None                   # True while the automatic guides are shown
         self.mouse = (0, 0)
+        self.last_click = (0.0, -99, -99)  # time and window position of the previous click
         self.drag = None
         self.hover = None                  # index of the hint whose list line is under the mouse
         self.scroll = 0.0                  # first visible line of the list
@@ -143,6 +173,7 @@ class Editor:
         self.result = None                 # dewarped page shown on the right ...
         self.result_small = None
         self.result_mask = None            # ... its page mask and metadata, as step 1 makes them
+        self.result_used = None            # keys of the automatic guides its fit kept
         self.result_meta = None
         self.result_key = None             # ... and the hints it was made with
         self.error = None
@@ -199,6 +230,7 @@ class Editor:
             if self.found is None:
                 self.found = find_guides(self.img)
             res = dewarp_page(self.img, hints, self.f35, found=self.found)
+            res["used"] = {guide_key(g) for g in res["guides"] if g.src != "hint"}
             self.done = (key, res, None)
         except Exception as e:             # the tool must keep working
             self.done = (key, None, str(e))
@@ -213,6 +245,7 @@ class Editor:
                 first = self.result is None
                 image = self.result = res["image"]
                 self.result_mask, self.result_meta = res["mask"], res["meta"]
+                self.result_used = res["used"]
                 self.result_small = cv2.resize(image, None, fx=0.25, fy=0.25, interpolation=cv2.INTER_AREA)
                 if first:
                     self.rview.fit(image.shape[1], image.shape[0])
@@ -323,6 +356,14 @@ class Editor:
         x, y = self.to_img(sx, sy)
         if self.pane(sx) is not self.view or not (0 <= x < self.W and 0 <= y < self.H):
             return                         # marks go on the photo only
+        now, (t0, x0, y0) = time.time(), self.last_click
+        self.last_click = (now, sx, sy)
+        if (self.mode in "hv" and self.cur and now - t0 < DOUBLE_S
+                and abs(sx - x0) <= DOUBLE_PX and abs(sy - y0) <= DOUBLE_PX):
+            self.last_click = (0.0, -99, -99)
+            if len(self.cur) >= 2:         # double click: like Enter; the first click set the point
+                self.finish()
+            return                         # on the first point it only keeps that one point
         self.cur.append([x, y])
         if self.mode in NEED and len(self.cur) == NEED[self.mode]:
             self.finish()
@@ -334,6 +375,9 @@ class Editor:
             if self.mode == "c":
                 self.items = [it for it in self.items if it[0] != "c"]   # one crop only
                 self.cur = order_quad(self.cur).tolist()                 # TL, TR, BR, BL
+            elif self.mode == "r":                                       # 2 opposite corners -> 4
+                (xa, ya), (xb, yb) = self.cur
+                self.cur = order_quad([[xa, ya], [xb, ya], [xb, yb], [xa, yb]]).tolist()
             self.items.append((self.mode, self.cur))
         self.cur = []
 
@@ -346,12 +390,12 @@ class Editor:
     def toggle_auto(self):
         if self.auto is not None:
             self.auto = None
+            self.msg = ""
             return
         try:
             if self.found is None:
                 self.found = find_guides(self.img)
-            self.auto = [(g.kind, g.pts) for g in self.found[0]]
-            self.msg = f"{len(self.auto)} automatic guides (thin lines)"
+            self.auto = True
         except Exception as e:             # the tool must keep working without it
             self.auto = None
             self.msg = f"automatic guides unavailable: {e}"
@@ -406,7 +450,7 @@ class Editor:
             return
         self.mouse = (x, y)
         hit = self.list_hit(x, y)
-        if event == cv2.EVENT_LBUTTONDOWN:
+        if event in (cv2.EVENT_LBUTTONDOWN, cv2.EVENT_LBUTTONDBLCLK):   # Windows sends the 2nd click as DBLCLK
             if hit == "title":
                 Editor.list_open = not Editor.list_open
             elif isinstance(hit, tuple) and hit[0] == "del":
@@ -433,6 +477,8 @@ class Editor:
             c = np.mean(pts, 0)
             order = np.argsort([np.arctan2(p[1] - c[1], p[0] - c[0]) for p in pts])
             cv2.polylines(vis, [np.array([s[i] for i in order], np.int32)], True, col, width, cv2.LINE_AA)
+        elif kind == "r" and len(s) == 2:                    # rectangle still being marked
+            cv2.rectangle(vis, s[0], s[1], col, width, cv2.LINE_AA)
         elif kind == "c" and len(s) > 1:                     # crop quad still being marked
             cv2.polylines(vis, [np.array(s, np.int32)], False, col, width, cv2.LINE_AA)
         elif kind == "x" and len(s) == 2:
@@ -478,9 +524,7 @@ class Editor:
         self.poll()
         vis = self.view.draw(self.img, self.small)           # left pane; the right one is added below
         if self.auto:
-            for kind, pts in self.auto:
-                s = np.array([self.to_scr(p) for p in pts], np.int32)
-                cv2.polylines(vis, [s], False, COL[kind], 1, cv2.LINE_AA)
+            self._draw_auto(vis)
         hit = self.list_hit(*self.mouse)
         self.hover = hit[1] if isinstance(hit, tuple) else None
         for i, (kind, pts) in enumerate(self.items):
@@ -498,6 +542,42 @@ class Editor:
         self._draw_list(vis, hit)
         self._draw_status(vis)
         return vis
+
+    def _draw_auto(self, vis):
+        """Automatic guides: used ones thin and solid, dropped ones dashed (see the help text)."""
+        if self.found is None:
+            return
+        hints = {"ignore": self.hints()["ignore"]}
+        kept, _ = apply_hints([Guide(g.kind, g.pts.copy(), g.src, g.w) for g in self.found[0]], hints)
+        kept_pts = {id(g): g for g in kept}
+        keys = {guide_key(g) for g in kept}
+        # which of the kept guides the fit dropped; only known when the right pane is up to date
+        used = self.result_used if self.fresh else None
+        n_ign = n_fit = 0
+        boxes = [np.array(b, float).reshape(2, 2) for b in hints["ignore"]]
+        for g in self.found[0]:                       # parts removed by an ignore box: dark dashed
+            cut = np.zeros(len(g.pts), bool)
+            for b in boxes:
+                cut |= np.all((g.pts >= b.min(0)) & (g.pts <= b.max(0)), axis=1)
+            if (~cut).sum() < 3:                      # too little left: step 1 drops the whole guide
+                cut[:] = True
+            s = [self.to_scr(p) for p in g.pts]
+            for i in range(len(s) - 1):
+                if cut[i] or cut[i + 1]:
+                    dashed(vis, s[i:i + 2], IGNORED_COL)
+        for g in kept_pts.values():
+            s = [self.to_scr(p) for p in g.pts]
+            if used is not None and guide_key(g) not in used:
+                dashed(vis, s, UNFIT_COL)
+                n_fit += 1
+            else:
+                cv2.polylines(vis, [np.array(s, np.int32)], False, COL[g.kind], 1, cv2.LINE_AA)
+        total = sum(len(g.pts) for g in self.found[0])
+        n_ign = total - sum(len(g.pts) for g in kept)
+        n_lost = len(self.found[0]) - len(keys)
+        fit = f", {n_fit} dropped by the fit (magenta)" if used is not None else ", fit: updating"
+        self.msg = (f"{len(self.found[0])} automatic guides: {n_lost} removed and {n_ign} points cut "
+                    f"by ignore boxes (dark dashed){fit}")
 
     def _draw_result(self):
         """Right pane: the dewarped page for the current hints, and what state it is in."""
