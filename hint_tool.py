@@ -26,6 +26,7 @@ Hints are stored next to each photo as <name>.hints.json (photo pixel coordinate
 """
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -39,6 +40,14 @@ COL = {"h": (40, 40, 255), "v": (255, 110, 0), "r": (0, 150, 255), "x": (120, 12
 NAME = {"h": "HORIZONTAL line", "v": "VERTICAL line", "r": "RECTANGLE (4 corners)",
         "x": "IGNORE box (2 clicks)", "c": "CROP box (2 clicks)"}
 NEED = {"r": 4, "x": 2, "c": 2}
+MAC = sys.platform == "darwin"
+
+
+def wheel_delta(flags):
+    """Scroll amount of a mouse-wheel event on Windows / Linux: a signed 16-bit number in the
+    upper half of `flags`, +-120 per notch. (OpenCV 5 no longer offers cv2.getMouseWheelDelta.)"""
+    d = (int(flags) >> 16) & 0xFFFF
+    return d - 0x10000 if d >= 0x8000 else d
 
 
 def load(path):
@@ -164,7 +173,7 @@ class Editor:
             self.cur, self.mode = [], ch
         elif ch in ("\r", "\n", " "):
             self.finish()
-        elif ch in ("u", "\b"):
+        elif ch in ("u", "\b", "\x7f"):
             self.undo()
         elif ch == "0" or k in (0x2E0000, 65535, 3014656):     # DEL on Windows / X11
             self.items, self.cur = [], []
@@ -188,6 +197,17 @@ class Editor:
         return None
 
     def on_mouse(self, event, x, y, flags, _=None):
+        if event in (cv2.EVENT_MOUSEWHEEL, cv2.EVENT_MOUSEHWHEEL):
+            if event == cv2.EVENT_MOUSEWHEEL:
+                if MAC:
+                    # macOS: x, y are the scroll amount (pixels), not the cursor position;
+                    # a trackpad sends many small steps
+                    step, at = 0.006 * max(-60, min(60, y)), self.mouse
+                else:
+                    step, at = 0.22 * max(-240, min(240, wheel_delta(flags))) / 120, (x, y)
+                if step:
+                    self.zoom(math.exp(step), at)
+            return
         self.mouse = (x, y)
         if event == cv2.EVENT_LBUTTONDOWN:
             self.click(x, y)
@@ -198,8 +218,6 @@ class Editor:
         elif event == cv2.EVENT_MOUSEMOVE and self.drag:
             x0, y0, ox, oy = self.drag
             self.ox, self.oy = ox - (x - x0) / self.z, oy - (y - y0) / self.z
-        elif event == cv2.EVENT_MOUSEWHEEL:
-            self.zoom(1.25 if cv2.getMouseWheelDelta(flags) > 0 else 0.8, (x, y))
 
     # ---- drawing --------------------------------------------------------------
     def _shape(self, vis, kind, pts, col, closed_ok=True):
