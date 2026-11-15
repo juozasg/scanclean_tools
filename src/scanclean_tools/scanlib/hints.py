@@ -33,12 +33,28 @@ def apply_hints(guides, hints, w_hint=6.0):
         if len(p) >= 2 and ln.get("type") in ("h", "v"):
             out.append(Guide(ln["type"], p, "hint", w_hint))
     for r in hints.get("rects", []):
-        p = np.array(r, float).reshape(4, 2)
-        c = p.mean(0)
-        ang = np.arctan2(p[:, 1] - c[1], p[:, 0] - c[0])
-        tl, tr, br, bl = p[np.argsort(ang)]          # image y is down: -pi.. => TL,TR,BR,BL
+        tl, tr, br, bl = order_quad(r)
         out += [Guide("h", [tl, tr], "hint", w_hint), Guide("h", [bl, br], "hint", w_hint),
                 Guide("v", [tl, bl], "hint", w_hint), Guide("v", [tr, br], "hint", w_hint)]
-    crop = np.array(hints["crop"], float).reshape(-1, 2) if hints.get("crop") else None
-    return out, crop
+    return out, crop_points(hints)
+
+
+def order_quad(pts):
+    """Four points in any order -> top-left, top-right, bottom-right, bottom-left."""
+    p = np.asarray(pts, np.float64).reshape(4, 2)
+    c = p.mean(0)
+    return p[np.argsort(np.arctan2(p[:, 1] - c[1], p[:, 0] - c[0]))]     # image y points down
+
+
+def crop_points(hints):
+    """The crop quad of a hints dict as 4 photo points (TL, TR, BR, BL), or None.
+    Older files hold two opposite corners of a box; they become the four corners of that box."""
+    c = hints.get("crop") if hints else None
+    if not c:
+        return None
+    p = np.array(c, float).reshape(-1, 2)
+    if len(p) == 2:
+        (xa, ya), (xb, yb) = p
+        p = np.array([[xa, ya], [xb, ya], [xb, yb], [xa, yb]])
+    return order_quad(p) if len(p) == 4 else None
 

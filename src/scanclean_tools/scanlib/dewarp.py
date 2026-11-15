@@ -116,10 +116,13 @@ def dewarp_page(bgr, hints=None, focal35=26.0, scale=1.0, work=2000, use_polish=
             core = (*inp.min(0), *inp.max(0))
 
     trim = True
-    if crop_hint is not None and len(crop_hint) >= 2:              # the user decided the crop
-        cf = to_out(to_final(crop_hint))
+    if crop_hint is not None:                                      # the user decided the crop
+        cf = to_out(to_final(crop_hint))                           # quad, straight edges on the flat page
+        quad = np.zeros((Ho, Wo), np.uint8)
+        cv2.fillPoly(quad, [np.round(cf).astype(np.int32).reshape(-1, 1, 2)], (1,))
+        mask = (pm >= 128) & (quad > 0)                            # inside the quad, where the photo has data
         bx = (max(int(cf[:, 0].min()), 0), max(int(cf[:, 1].min()), 0),
-              min(int(cf[:, 0].max()), Wo), min(int(cf[:, 1].max()), Ho))
+              min(int(np.ceil(cf[:, 0].max())), Wo), min(int(np.ceil(cf[:, 1].max())), Ho))
         trim = False
     else:                                                          # the page itself
         ys, xs = np.where(mask)

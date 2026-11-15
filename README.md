@@ -69,7 +69,7 @@ the tool.
    | `h` | 2+ points along a line, `Enter` | this line is horizontal on the page |
    | `v` | 2+ points along a line, `Enter` | this line is vertical on the page |
    | `x` | 2 corners of a box | ignore automatic guides in here (messy figure) |
-   | `c` | 2 corners of a box | crop the page to this area |
+   | `c` | 4 corners of the page (any order) | cut the page to this quad |
 
    `Enter` finishes a line, `Esc` cancels the item being marked, `u` undoes, `g` shows the
    automatic guides, mouse wheel zooms, right-drag pans, `n`/`p` next/previous photo, `q` quits.
@@ -200,12 +200,13 @@ Add a dependency with `uv add <package>`; after changing `[project.scripts]` run
 {"lines":  [{"type": "h", "pts": [[x, y], [x, y]]}, {"type": "v", "pts": [[x, y], [x, y]]}],
  "rects":  [[[x, y], [x, y], [x, y], [x, y]]],
  "ignore": [[x0, y0, x1, y1]],
- "crop":   [[x, y], [x, y]],
+ "crop":   [[x, y], [x, y], [x, y], [x, y]],
  "auto":   true}
 ```
 
 Coordinates are pixels of the photo. `"auto": false` switches the automatic guides off for
-that page. A `crop` hint also switches off the trim in step 2.
+that page. A `crop` hint (4 corners; older files with 2 opposite corners still work) also switches off
+the trim in step 2: everything outside the quad becomes white.
 
 ## Limits
 

@@ -11,7 +11,7 @@ What you can mark (press the key, then click on the photo):
         then press ENTER (or SPACE) to finish the line.
     r   rectangle: click the 4 corners of a printed rectangle (table / figure frame), any order
     x   ignore box: 2 clicks; automatic guides inside it are thrown away (messy figure)
-    c   crop box:   2 clicks; the output page is cropped to this area
+    c   crop: click the 4 corners of the page, any order; the page is cut to this quad
 
 Other keys
     g            show / hide the guides step 1 finds automatically (takes a few seconds)
@@ -39,12 +39,14 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
+from .scanlib.hints import crop_points, order_quad
+
 IMG_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 COL = {"h": (40, 40, 255), "v": (255, 110, 0), "r": (0, 150, 255), "x": (120, 120, 120),
        "c": (0, 170, 0), "cur": (0, 220, 255)}
 NAME = {"h": "HORIZONTAL line", "v": "VERTICAL line", "r": "RECTANGLE (4 corners)",
-        "x": "IGNORE box (2 clicks)", "c": "CROP box (2 clicks)"}
-NEED = {"r": 4, "x": 2, "c": 2}
+        "x": "IGNORE box (2 clicks)", "c": "CROP quad (4 corners)"}
+NEED = {"r": 4, "x": 2, "c": 4}
 OPS = [("Horizontal", "h", "h"), ("Vertical", "v", "v"), ("Rectangle", "r", "r"), ("Ignore", "x", "x"),
        ("Crop", "c", "c"), ("Finish", "Enter", None), ("Cancel", "Esc", None), ("Undo", "u", None),
        ("Guides", "g", None), ("List", "l", None), ("Fit", "f", None), ("Zoom", "+/-", None),
@@ -104,8 +106,9 @@ class Editor:
             self.items.append(("r", [list(map(float, p)) for p in r]))
         for b in d.get("ignore", []):
             self.items.append(("x", [[b[0], b[1]], [b[2], b[3]]]))
-        if d.get("crop"):
-            self.items.append(("c", [list(map(float, p)) for p in d["crop"]]))
+        crop = crop_points(d)
+        if crop is not None:
+            self.items.append(("c", crop.tolist()))
 
     def write(self):
         d = {"image": self.path.name, "size": [self.W, self.H], "lines": [], "rects": [], "ignore": []}
@@ -191,6 +194,7 @@ class Editor:
         elif self.mode in NEED and len(self.cur) == NEED[self.mode]:
             if self.mode == "c":
                 self.items = [it for it in self.items if it[0] != "c"]   # one crop only
+                self.cur = order_quad(self.cur).tolist()                 # TL, TR, BR, BL
             self.items.append((self.mode, self.cur))
         self.cur = []
 
@@ -284,14 +288,15 @@ class Editor:
         if kind in "hv":
             if len(s) > 1:
                 cv2.polylines(vis, [np.array(s, np.int32)], False, col, width, cv2.LINE_AA)
-        elif kind == "r" and len(s) == 4 and closed_ok:
+        elif kind in "rc" and len(s) == 4 and closed_ok:
             c = np.mean(pts, 0)
             order = np.argsort([np.arctan2(p[1] - c[1], p[0] - c[0]) for p in pts])
             cv2.polylines(vis, [np.array([s[i] for i in order], np.int32)], True, col, width, cv2.LINE_AA)
-        elif kind in "xc" and len(s) == 2:
+        elif kind == "c" and len(s) > 1:                     # crop quad still being marked
+            cv2.polylines(vis, [np.array(s, np.int32)], False, col, width, cv2.LINE_AA)
+        elif kind == "x" and len(s) == 2:
             cv2.rectangle(vis, s[0], s[1], col, width, cv2.LINE_AA)
-            if kind == "x":
-                cv2.line(vis, s[0], s[1], col, max(width - 1, 1), cv2.LINE_AA)
+            cv2.line(vis, s[0], s[1], col, max(width - 1, 1), cv2.LINE_AA)
         for q in s:
             cv2.circle(vis, q, width + 2, col, -1, cv2.LINE_AA)
         if s and kind in "hvrxc":
