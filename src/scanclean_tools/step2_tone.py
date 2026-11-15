@@ -1,14 +1,13 @@
-#!/usr/bin/env python3
 """
-step2_tone.py - COLOUR ONLY: flat colour page -> clean greyscale scan.
+Step 2 - COLOUR ONLY: flat colour page -> clean greyscale scan.
 
-  python step2_tone.py PHOTO_DIR/flat                   # -> PHOTO_DIR/clean/
-  python step2_tone.py PHOTO_DIR/flat --white 0.82      # remove more show-through
-  python step2_tone.py some_folder --no-trim            # any folder of page images works
+  scanclean-tone PHOTO_DIR/flat                   # -> PHOTO_DIR/clean/
+  scanclean-tone PHOTO_DIR/flat --white 0.82      # remove more show-through
+  scanclean-tone some_folder --no-trim            # any folder of page images works
 
 Per page: flat-field (uneven light, shadows and paper tint -> white), local ink level (faint
 print is lifted), greyscale levels, whitening of everything that is not this page, trim to the
-printed area. The page mask and text height come from flat/meta/ (written by step1_dewarp.py);
+printed area. The page mask and text height come from flat/meta/ (written by scanclean-dewarp);
 without them they are estimated from the image itself.
 """
 import argparse
@@ -18,8 +17,8 @@ from pathlib import Path
 
 import cv2
 
-from scanlib.tone import auto_mask, tone_page
-from scanlib.util import imread, imwrite, list_images
+from .scanlib.tone import auto_mask, tone_page
+from .scanlib.util import imread, imwrite, list_images
 
 
 def main(argv=None):

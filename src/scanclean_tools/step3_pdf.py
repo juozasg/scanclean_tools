@@ -1,9 +1,8 @@
-#!/usr/bin/env python3
 """
-step3_pdf.py - bundle a folder of page images into one PDF (pages in natural file-name order).
+Step 3 - bundle a folder of page images into one PDF (pages in natural file-name order).
 
-  python step3_pdf.py PHOTO_DIR/clean                  # -> PHOTO_DIR/clean.pdf
-  python step3_pdf.py PHOTO_DIR/clean -o article.pdf --dpi 300
+  scanclean-pdf PHOTO_DIR/clean                  # -> PHOTO_DIR/clean.pdf
+  scanclean-pdf PHOTO_DIR/clean -o article.pdf --dpi 300
 
 Images are embedded as they are (no recompression). Requires: img2pdf
 """
@@ -11,7 +10,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from scanlib.util import list_images
+from .scanlib.util import list_images
 
 
 def main(argv=None):

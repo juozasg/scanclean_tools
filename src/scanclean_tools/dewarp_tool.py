@@ -1,9 +1,8 @@
-#!/usr/bin/env python3
 """
-hint_tool.py - mark geometric hints on page photos for step1_dewarp.py.
+dewarp-tool - mark geometric hints on page photos for step 1 (scanclean-dewarp).
 
-    python hint_tool.py PHOTO_DIR                 # step through all photos
-    python hint_tool.py PHOTO_DIR --only 157 164  # only the pages scanclean flagged
+    dewarp-tool PHOTO_DIR                 # step through all photos
+    dewarp-tool PHOTO_DIR --only 157 164  # only the pages step 1 flagged
 
 What you can mark (press the key, then click on the photo):
     h   line that is HORIZONTAL on the real page (text baseline, table rule, figure frame ...)
@@ -206,8 +205,7 @@ class Editor:
             self.auto = None
             return
         try:
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
-            from scanlib.guides import find_guides
+            from .scanlib.guides import find_guides
             guides, _ = find_guides(self.img)
             self.auto = [(g.kind, g.pts) for g in guides]
             self.msg = f"{len(self.auto)} automatic guides (thin lines)"
@@ -310,7 +308,7 @@ class Editor:
         cv2.rectangle(vis, (x0, BAR_H), (w - 1, BAR_H + HEAD_H - 1), (70, 70, 70) if hit == "title" else (55, 55, 55), -1)
         cx, cy = x0 + 13, BAR_H + HEAD_H // 2
         tri = [(cx - 5, cy - 3), (cx + 5, cy - 3), (cx, cy + 4)] if Editor.list_open else \
-              [(cx - 3, cy - 5), (cx - 3, cy + 5), (cx + 4, cy)]
+            [(cx - 3, cy - 5), (cx - 3, cy + 5), (cx + 4, cy)]
         cv2.fillPoly(vis, [np.array(tri, np.int32)], (230, 230, 230), cv2.LINE_AA)
         cv2.putText(vis, f"Hints ({len(self.items)})", (x0 + 26, BAR_H + 17), font, 0.48, (240, 240, 240), 1, cv2.LINE_AA)
         for i, y in rows:
@@ -396,7 +394,7 @@ def main(argv=None):
         sys.exit("no images found")
     win = tuple(int(v) for v in args.win.lower().split("x"))
 
-    title = "hint_tool"
+    title = "dewarp_tool"
     cv2.namedWindow(title, cv2.WINDOW_AUTOSIZE)
     i = 0
     while 0 <= i < len(files):

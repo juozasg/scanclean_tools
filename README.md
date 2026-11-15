@@ -1,28 +1,45 @@
-# scanclean — phone photos of journal pages → flat greyscale "scans"
+# scanclean-tools — phone photos of journal pages → flat greyscale "scans"
 
-Three independent steps, each a script of its own, plus a driver:
+A uv project. Three independent steps, each a command of its own, plus one that runs them all:
 
-| step | script | does | reads → writes |
+| command | step | does | reads → writes |
 |---|---|---|---|
-| 1 | `step1_dewarp.py` | **geometry only**: un-warps the page, colours untouched | `photos/` → `photos/flat/` |
-| 2 | `step2_tone.py` | **colour only**: light, shadows, paper tint → greyscale; trim | `photos/flat/` → `photos/clean/` |
-| 3 | `step3_pdf.py` | bundles page images into a PDF | `photos/clean/` → `photos/clean.pdf` |
-| all | `run_all.sh` | runs 1 → 2 → 3 (bash) | |
-| all | `scanclean.py` | the same in Python, for shells without bash | |
-| – | `hint_tool.py` | click-to-mark hints for pages step 1 gets wrong | `photos/<page>.hints.json` |
+| `scanclean-dewarp` | 1 | **geometry only**: un-warps the page, colours untouched | `photos/` → `photos/flat/` |
+| `scanclean-tone` | 2 | **colour only**: light, shadows, paper tint → greyscale; trim | `photos/flat/` → `photos/clean/` |
+| `scanclean-pdf` | 3 | bundles page images into a PDF | `photos/clean/` → `photos/clean.pdf` |
+| `scanclean` | all | runs 1 → 2 → 3 | |
+| `dewarp-tool` | – | click-to-mark hints for pages step 1 gets wrong | `photos/<page>.hints.json` |
 
-Install once: `pip install -r requirements.txt`
+`run_all.sh` is a bash driver that calls the same three commands.
+
+## Setup
+
+```
+cd scanclean_tools
+uv sync                      # creates .venv, installs dependencies and the commands
+```
+
+Ways to run a command:
+
+| where you are | how |
+|---|---|
+| inside the project folder | `uv run scanclean path/to/photos` |
+| any folder | `uv run --project ~/code/scanclean_tools scanclean path/to/photos` |
+| any folder, short form | once: `uv tool install --editable ~/code/scanclean_tools`, then just `scanclean path/to/photos` |
+| bash (Git Bash / WSL) | `~/code/scanclean_tools/run_all.sh path/to/photos` |
+
+The commands below are written in the short form; put `uv run` in front if you did not install
+the tool.
 
 ## Workflow
 
 1. **Run everything**
 
    ```
-   ./run_all.sh path/to/photos
+   scanclean path/to/photos
    ```
 
-   About 7 s per 12 MP photo. On Windows run it from Git Bash or WSL, or use
-   `python scanclean.py path\to\photos --pdf article.pdf`.
+   About 7 s per 12 MP photo.
 
 2. **Read the table step 1 prints**
 
@@ -43,7 +60,7 @@ Install once: `pip install -r requirements.txt`
 4. **Add hints only where needed**
 
    ```
-   python hint_tool.py path/to/photos --only 156
+   dewarp-tool path/to/photos --only 156
    ```
 
    | key | then click | meaning |
@@ -54,23 +71,34 @@ Install once: `pip install -r requirements.txt`
    | `x` | 2 corners of a box | ignore automatic guides in here (messy figure) |
    | `c` | 2 corners of a box | crop the page to this area |
 
-   `g` shows the automatic guides, mouse wheel zooms, right-drag pans, `u` undoes,
-   `n`/`p` next/previous photo, `q` quits. Follow a bent line with several clicks; a
+   `Enter` finishes a line, `Esc` cancels the item being marked, `u` undoes, `g` shows the
+   automatic guides, mouse wheel zooms, right-drag pans, `n`/`p` next/previous photo, `q` quits.
+   The list of hints at the top left shows the newest first: hover a line to highlight that
+   hint, click its x to delete it, click the title (or press `l`) to fold the list. Follow a bent line with several clicks; a
    straight-looking line needs only its two ends.
 
 5. **Redo only those pages** (the PDF is rebuilt from all pages)
 
    ```
-   ./run_all.sh path/to/photos 156
+   scanclean path/to/photos --only 156
    ```
 
 6. **Change the look without redoing geometry**
 
    ```
-   STEPS="2 3" TONE_OPTS="--white 0.82" ./run_all.sh path/to/photos
+   scanclean path/to/photos --steps 2 3 --white 0.82
    ```
 
 7. Optional text layer: `ocrmypdf -l rus+deu clean.pdf clean_ocr.pdf`.
+
+## `scanclean` options
+
+| option | meaning |
+|---|---|
+| `--only 156 164` | only these pages (a single photo path works too) |
+| `--steps 2 3` | which steps to run |
+| `--pdf out.pdf` / `--no-pdf` | PDF path (default `PHOTO_DIR/clean.pdf`) / skip step 3 |
+| `--scale`, `--white`, `--black`, `--margin` | passed to step 1 / step 2, see below |
 
 ## `run_all.sh` settings (environment variables)
 
@@ -81,11 +109,10 @@ Install once: `pip install -r requirements.txt`
 | `DEWARP_OPTS` | | extra options for step 1, e.g. `"--format png"` |
 | `TONE_OPTS` | | extra options for step 2, e.g. `"--white 0.82 --margin 6"` |
 | `PDF_OPTS` | | extra options for step 3, e.g. `"--dpi 400"` |
-| `PYTHON` | auto | interpreter |
 
 ## Options of the steps
 
-**Step 1** `step1_dewarp.py SRC [-o OUT] [--only …]`
+**Step 1** `scanclean-dewarp SRC [-o OUT] [--only …]`
 
 | option | default | use |
 |---|---|---|
@@ -95,7 +122,7 @@ Install once: `pip install -r requirements.txt`
 | `--no-polish` | | sheet model only |
 | `--warn` | 2.5 | residual (px) above which a page is marked `CHECK` |
 
-**Step 2** `step2_tone.py SRC [-o OUT] [--only …]`
+**Step 2** `scanclean-tone SRC [-o OUT] [--only …]`
 
 | option | default | use |
 |---|---|---|
@@ -109,14 +136,14 @@ Install once: `pip install -r requirements.txt`
 Step 2 also works on any folder of page images (e.g. flatbed scans): without `meta/` from
 step 1 it estimates text height and paper area itself.
 
-**Step 3** `step3_pdf.py SRC [-o OUT.pdf] [--dpi 300] [--only …]`
+**Step 3** `scanclean-pdf SRC [-o OUT.pdf] [--dpi 300] [--only …]`
 
 ## Files between the steps
 
 ```
 photos/
   167.jpg                     photo
-  167.hints.json              optional, from hint_tool.py
+  167.hints.json              optional, from dewarp-tool
   flat/167.jpg                step 1: flat colour page, cropped to the page
   flat/meta/167.mask.png      step 1: white = this page (not desk, gutter, facing page)
   flat/meta/167.json          step 1: text height, trim flag, fit quality
@@ -126,21 +153,33 @@ photos/
   clean.pdf                   step 3
 ```
 
-## Code layout
+## Project layout
 
 ```
-scanlib/util.py     file listing, image reading / writing
-scanlib/paper.py    paper brightness, ink level, paper mask, text height
-scanlib/guides.py   automatic guides: text lines, rules, margins
-scanlib/hints.py    manual hints
-scanlib/sheet.py    camera + curled-sheet model, polish field, resampling maps
-scanlib/layout.py   page limits (gutter, edges), trim box, edge clean-up
-scanlib/dewarp.py   step 1 as a function: dewarp_page(photo) -> image, mask, meta
-scanlib/tone.py     step 2 as a function: tone_page(image, mask, ...) -> grey page
+pyproject.toml                 dependencies, commands ([project.scripts]), build backend
+uv.lock                        exact versions (written by uv)
+run_all.sh                     bash driver
+src/scanclean_tools/           the package (import name: scanclean_tools)
+  run_all.py                   scanclean
+  step1_dewarp.py              scanclean-dewarp
+  step2_tone.py                scanclean-tone
+  step3_pdf.py                 scanclean-pdf
+  dewarp_tool.py               dewarp-tool
+  scanlib/util.py              file listing, image reading / writing
+  scanlib/paper.py             paper brightness, ink level, paper mask, text height
+  scanlib/guides.py            automatic guides: text lines, rules, margins
+  scanlib/hints.py             manual hints
+  scanlib/sheet.py             camera + curled-sheet model, polish field, resampling maps
+  scanlib/layout.py            page limits (gutter, edges), trim box, edge clean-up
+  scanlib/dewarp.py            step 1 as a function: dewarp_page(photo) -> image, mask, meta
+  scanlib/tone.py              step 2 as a function: tone_page(image, mask, ...) -> grey page
 ```
 
-The step scripts only parse options and read / write files, so each stage can be replaced
-or called from your own code.
+The step modules only parse options and read / write files; from your own code use
+`from scanclean_tools.scanlib.dewarp import dewarp_page` and
+`from scanclean_tools.scanlib.tone import tone_page`.
+
+Add a dependency with `uv add <package>`; after changing `[project.scripts]` run `uv sync`.
 
 ## How it works
 

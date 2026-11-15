@@ -1,4 +1,4 @@
-"""Manual hints (<photo>.hints.json, written by hint_tool.py)."""
+"""Manual hints (<photo>.hints.json, written by dewarp_tool.py)."""
 import json
 
 import numpy as np

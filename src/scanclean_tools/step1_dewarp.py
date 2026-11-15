@@ -1,16 +1,15 @@
-#!/usr/bin/env python3
 """
-step1_dewarp.py - GEOMETRY ONLY: photo of a page -> flat page, colours untouched.
+Step 1 - GEOMETRY ONLY: photo of a page -> flat page, colours untouched.
 
-  python step1_dewarp.py PHOTO_DIR                 # -> PHOTO_DIR/flat/
-  python step1_dewarp.py PHOTO_DIR --only 156 164  # redo selected pages (after adding hints)
+  scanclean-dewarp PHOTO_DIR                 # -> PHOTO_DIR/flat/
+  scanclean-dewarp PHOTO_DIR --only 156 164  # redo selected pages (after adding hints)
 
 Writes, per photo
   flat/<name>.jpg            flattened colour page, cropped to the page (or to the crop hint)
   flat/meta/<name>.mask.png  white where the pixel belongs to this page
-  flat/meta/<name>.json      text height, fit quality ... (read by step2_tone.py)
+  flat/meta/<name>.json      text height, fit quality ... (read by scanclean-tone)
   flat/debug/<name>_guides.jpg   guides and fitted page grid drawn on the photo
-and flat/report.json. Hints are read from PHOTO_DIR/<name>.hints.json (see hint_tool.py).
+and flat/report.json. Hints are read from PHOTO_DIR/<name>.hints.json (made with dewarp-tool).
 """
 import argparse
 import json
@@ -20,9 +19,9 @@ from pathlib import Path
 
 import cv2
 
-from scanlib.dewarp import dewarp_page, draw_debug, status
-from scanlib.hints import load_hints
-from scanlib.util import imwrite, list_images, load_photo
+from .scanlib.dewarp import dewarp_page, draw_debug, status
+from .scanlib.hints import load_hints
+from .scanlib.util import imwrite, list_images, load_photo
 
 
 def fmt(d):
@@ -89,7 +88,7 @@ def main(argv=None):
     rep_path.write_text(json.dumps(list(report.values()), indent=1), encoding="utf-8")
     if todo:
         print("\nlook at", out_dir / "debug", "for:", " ".join(todo),
-              "\n-> add hints with:  python hint_tool.py", args.src, "--only", " ".join(todo))
+              "\n-> add hints with:  dewarp-tool", args.src, "--only", " ".join(todo))
 
 
 if __name__ == "__main__":
