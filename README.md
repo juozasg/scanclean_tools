@@ -137,6 +137,11 @@ the tool.
 | `--white` | 0.88 | lower (0.82) removes more show-through, higher keeps faint pencil |
 | `--black` | 0.25 | higher = bolder print |
 | `--margin` | 4 | white border around the print, in text heights |
+| `--deblur` | 2.5 | sharpen regions that are out of focus (blur is measured per region; sharp parts are left alone); higher is stronger, 0 = off |
+| `--show-through` | 110 | remove faint patches (show-through from the back) that never get darker than this grey level; higher removes more, 0 keeps everything (faint pencil notes) |
+| `--keep-edges` | off | by default, dark streaks along the image edges left by gutter or page-edge shadow (long and thin along an edge, or filling a corner) are removed, only within the border strip set by `--edge-band`; this flag keeps them |
+| `--edge-band` | 0.15 | width of the border strip (fraction of page width / height) where edge shadow is looked for; nothing further in is changed |
+| `--no-adaptive` | off | by default, gutter zones where the print is fainter than in the centre (found per page, reported as "faded gutter") get their own white/black points so faded letters stay readable; this flag uses the same levels everywhere |
 | `--no-trim` | | keep the full page frame from step 1 |
 | `--format` | `png` | `jpg` for smaller files |
 
@@ -144,6 +149,12 @@ Step 2 also works on any folder of page images (e.g. flatbed scans): without `me
 step 1 it estimates text height and paper area itself.
 
 **Step 3** `scanclean-pdf SRC [-o OUT.pdf] [--dpi 300] [--only …]`
+
+Every page gets the same paper size and margins: pages are scaled slightly (at most
+`--max-scale`, default 15 %) so the printed area has the same size throughout, and the printed area is
+centred left to right at the same distance from the top, so a partial last page sits at the
+top with empty paper below. `--margin` (default 0.08) sets the white border; `--as-is`
+embeds the images unchanged, each at its own size.
 
 ## Files between the steps
 
@@ -199,8 +210,12 @@ Add a dependency with `uv add <package>`; after changing `[project.scripts]` run
    book gutter) is fitted with robust least squares: 3 rotation + 4 shape parameters.
    Guides the model cannot straighten are dropped and the fit repeated. A smooth 2-D
    polynomial field then removes the remaining 1–2 px. The photo is resampled once.
-3. **Tone.** Local paper brightness → white (flat-field), local ink level → black (faint
-   print near the gutter is lifted), greyscale levels. Step 2 assumes each page image shows
+3. **Tone.** Out-of-focus regions are found from how soft the edges of the print are, and
+   sharpened by denoising plus a deconvolution matched to their blur. Then local paper brightness → white (flat-field), local ink level → black (faint
+   print near the gutter is lifted), greyscale levels (in gutter zones where the print has faded compared with the page centre,
+   the white and black points move towards the faint print), then show-through removal: faint
+   patches with no dark core anywhere are turned white. Dark shadow streaks running along the image edges are
+   removed too (only within the outer 15% of the page, `--edge-band`). Step 2 assumes each page image shows
    only paper, so it uses no mask.
 
 ## Hint file format
