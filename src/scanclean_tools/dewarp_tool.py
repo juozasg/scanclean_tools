@@ -149,10 +149,13 @@ class Editor:
     """All state and logic of the tool; the window loop below only forwards events."""
 
     list_open = True                       # list of hints unfolded? (kept from photo to photo)
+    COL, NEED, OPS = COL, NEED, OPS            # a tool built on this editor can change these ...
+    MODES = "hvrxce"                           # ... and the marking keys
+    WORDS = ("dewarp", "dewarping", "dewarped")   # status words of the right pane
 
     def __init__(self, path, win=(1500, 950)):
         self.path = Path(path)
-        self.img, f35 = load_photo(self.path)
+        self.img, f35 = self.load(self.path)
         self.f35 = f35 or 26.0             # same focal length as step 1 uses
         self.small = cv2.resize(self.img, None, fx=0.25, fy=0.25, interpolation=cv2.INTER_AREA)
         self.H, self.W = self.img.shape[:2]
@@ -189,6 +192,18 @@ class Editor:
         self.read()
 
     # ---- file -----------------------------------------------------------------
+    def load(self, path):
+        """The image to mark (BGR) and its 35 mm focal length (or None)."""
+        return load_photo(path)
+
+    def find_auto(self):
+        """Automatic guides of the image: (guides, info)."""
+        return find_guides(self.img)
+
+    def extra_key(self, ch, k):
+        """Keys a tool built on this editor adds; returns like key()."""
+        return None
+
     @property
     def hint_path(self):
         return self.path.with_suffix(".hints.json")
@@ -233,7 +248,7 @@ class Editor:
         """Step 1 for this photo with `hints`; runs in a background thread."""
         try:
             if self.found is None:
-                self.found = find_guides(self.img)
+                self.found = self.find_auto()
             res = dewarp_page(self.img, hints, self.f35, found=self.found)
             res["used"] = {guide_key(g) for g in res["guides"] if g.src != "hint"}
             self.done = (key, res, None)
@@ -397,13 +412,13 @@ class Editor:
                 self.finish()
             return                         # on the first point it only keeps that one point
         self.cur.append([x, y])
-        if self.mode in NEED and len(self.cur) == NEED[self.mode]:
+        if self.mode in self.NEED and len(self.cur) == self.NEED[self.mode]:
             self.finish()
 
     def finish(self):
         if self.mode in "hv" and len(self.cur) >= 2:
             self.items.append((self.mode, self.cur))
-        elif self.mode in NEED and len(self.cur) == NEED[self.mode]:
+        elif self.mode in self.NEED and len(self.cur) == self.NEED[self.mode]:
             if self.mode == "c":
                 self.items = [it for it in self.items if it[0] != "c"]   # one crop only
                 self.cur = order_quad(self.cur).tolist()                 # TL, TR, BR, BL
@@ -426,7 +441,7 @@ class Editor:
             return
         try:
             if self.found is None:
-                self.found = find_guides(self.img)
+                self.found = self.find_auto()
             self.auto = True
         except Exception as e:             # the tool must keep working without it
             self.auto = None
@@ -441,7 +456,7 @@ class Editor:
         elif k > 0xFF and (k & 0xFF) not in (8, 127):  # other special keys: their low byte is not a letter
             k = 0 if k not in (0x2E0000, 65535, 3014656) else k
         ch = chr(k & 0xFF).lower() if 0 <= (k & 0xFF) < 128 else ""
-        if ch in ("h", "v", "r", "x", "c", "e"):
+        if ch in self.MODES:
             self.drop_grab()
             self.finish()
             self.cur, self.mode = [], ch
@@ -480,6 +495,8 @@ class Editor:
             if self.want_save:                   # a save is still waiting for the dewarp
                 self.wait()
             return {"n": "next", "p": "prev", "q": "quit"}[ch]
+        else:
+            return self.extra_key(ch, k)
         return None
 
     def on_mouse(self, event, x, y, flags, _=None):
@@ -520,7 +537,7 @@ class Editor:
     # ---- drawing --------------------------------------------------------------
     def _shape(self, vis, kind, pts, col, closed_ok=True, width=2):
         s = [self.to_scr(p) for p in pts]
-        if kind in "hv":
+        if kind in "hva":
             if len(s) > 1:
                 cv2.polylines(vis, [np.array(s, np.int32)], False, col, width, cv2.LINE_AA)
         elif kind in "rc" and len(s) == 4 and closed_ok:
@@ -536,7 +553,7 @@ class Editor:
             cv2.line(vis, s[0], s[1], col, max(width - 1, 1), cv2.LINE_AA)
         for q in s:
             cv2.circle(vis, q, width + 2, col, -1, cv2.LINE_AA)
-        if s and kind in "hvrxc":
+        if s and kind in "hvrxca":
             cv2.putText(vis, kind.upper(), (s[0][0] + 6, s[0][1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1,
                         cv2.LINE_AA)
 
@@ -557,7 +574,7 @@ class Editor:
             kind, pts = self.items[i]
             if i == self.hover:
                 cv2.rectangle(vis, (x0, y), (w - 1, y + ROW_H - 1), (90, 90, 90), -1)
-            col = tuple(min(int(c) + 60, 255) for c in COL[kind])                   # readable on dark
+            col = tuple(min(int(c) + 60, 255) for c in self.COL[kind])                   # readable on dark
             text = self.label(kind, pts)
             cv2.putText(vis, text[0], (x0 + 9, y + 16), font, 0.5, col, 2, cv2.LINE_AA)
             cv2.putText(vis, text[1:], (x0 + 20, y + 16), font, 0.45, (235, 235, 235), 1, cv2.LINE_AA)
@@ -579,11 +596,11 @@ class Editor:
         self.hover = hit[1] if isinstance(hit, tuple) else None
         for i, (kind, pts) in enumerate(self.items):
             if i != self.hover:
-                self._shape(vis, kind, pts, COL[kind])
+                self._shape(vis, kind, pts, self.COL[kind])
         if self.hover is not None:                           # highlighted hint: on top, with a halo
             kind, pts = self.items[self.hover]
             self._shape(vis, kind, pts, (255, 255, 255), width=8)
-            self._shape(vis, kind, pts, COL[kind], width=4)
+            self._shape(vis, kind, pts, self.COL[kind], width=4)
         if self.mode == "e":                                 # edit: ring on the point to pick / being moved
             ij = self.grab[:2] if self.grab is not None else self.point_at(*self.mouse)
             if ij is not None:
@@ -591,7 +608,7 @@ class Editor:
                 cv2.circle(vis, q, 9, (0, 0, 0), 3, cv2.LINE_AA)
                 cv2.circle(vis, q, 9, EDIT_COL, 2 if self.grab is None else 3, cv2.LINE_AA)
         if self.cur:
-            self._shape(vis, self.mode, self.cur + [list(self.to_img(*self.mouse))], COL["cur"], closed_ok=False)
+            self._shape(vis, self.mode, self.cur + [list(self.to_img(*self.mouse))], self.COL["cur"], closed_ok=False)
         vis = np.hstack([vis, self._draw_result()])
         cv2.line(vis, (self.rview.x0, BAR_H), (self.rview.x0, self.win[1]), (30, 30, 30), 2)
         self._draw_bar(vis)
@@ -627,7 +644,7 @@ class Editor:
                 dashed(vis, s, UNFIT_COL)
                 n_fit += 1
             else:
-                cv2.polylines(vis, [np.array(s, np.int32)], False, COL[g.kind], 1, cv2.LINE_AA)
+                cv2.polylines(vis, [np.array(s, np.int32)], False, self.COL[g.kind], 1, cv2.LINE_AA)
         total = sum(len(g.pts) for g in self.found[0])
         n_ign = total - sum(len(g.pts) for g in kept)
         n_lost = len(self.found[0]) - len(keys)
@@ -644,13 +661,13 @@ class Editor:
             pane = v.draw(self.result, self.result_small)
         dots = "." * (1 + int(time.time() * 2) % 3)
         if self.error and self.fresh:
-            txt = f"dewarp failed: {self.error}"
+            txt = f"{self.WORDS[0]} failed: {self.error}"
         elif self.result is None:
-            txt = "dewarping " + dots
+            txt = f"{self.WORDS[1]} " + dots
         elif not self.fresh:
             txt = "updating " + dots
         else:
-            txt = f"dewarped  {self.result.shape[1]} x {self.result.shape[0]}"
+            txt = f"{self.WORDS[2]}  {self.result.shape[1]} x {self.result.shape[0]}"
             if self.saved_key == self.result_key:
                 txt += "   saved"
         font, fs = cv2.FONT_HERSHEY_SIMPLEX, 0.45
@@ -664,14 +681,14 @@ class Editor:
         w, font, fs = self.win[0], cv2.FONT_HERSHEY_SIMPLEX, 0.45
         cv2.rectangle(vis, (0, 0), (w, BAR_H), (30, 30, 30), -1)
         size = [(cv2.getTextSize(word + " ", font, fs, 1)[0][0], cv2.getTextSize(key, font, fs, 2)[0][0])
-                for word, key, _ in OPS]
+                for word, key, _ in self.OPS]
         used = sum(a + b for a, b in size)
-        gap = max(8, min(28, (w - 16 - used) // max(len(OPS) - 1, 1)))      # spread over the bar
+        gap = max(8, min(28, (w - 16 - used) // max(len(self.OPS) - 1, 1)))      # spread over the bar
         x, base = 8, BAR_H // 2 + 5
-        for (word, key, mode), (ww, kw) in zip(OPS, size):
+        for (word, key, mode), (ww, kw) in zip(self.OPS, size):
             if mode is not None and mode == self.mode:                     # active operation
                 cv2.rectangle(vis, (x - 5, 2), (x + ww + kw + 5, BAR_H - 3), (85, 85, 85), -1)
-                cv2.line(vis, (x - 5, BAR_H - 3), (x + ww + kw + 5, BAR_H - 3), COL[mode], 2)
+                cv2.line(vis, (x - 5, BAR_H - 3), (x + ww + kw + 5, BAR_H - 3), self.COL[mode], 2)
             cv2.putText(vis, word, (x, base), font, fs, (235, 235, 235), 1, cv2.LINE_AA)
             cv2.putText(vis, key, (x + ww, base), font, fs, (60, 220, 60), 2, cv2.LINE_AA)
             x += ww + kw + gap
@@ -684,6 +701,29 @@ class Editor:
         h = self.win[1]
         cv2.rectangle(vis, (0, h - th - 12), (tw + 16, h), (30, 30, 30), -1)
         cv2.putText(vis, txt, (8, h - 7), font, fs, (235, 235, 235), 1, cv2.LINE_AA)
+
+
+def run(files, win, title, editor=Editor):
+    """Window loop: one editor per image, n / p to move between them, q to quit."""
+    cv2.namedWindow(title, cv2.WINDOW_AUTOSIZE)
+    i = 0
+    while 0 <= i < len(files):
+        ed = editor(files[i], win)
+        cv2.setMouseCallback(title, ed.on_mouse)
+        act = None
+        while act is None:
+            cv2.imshow(title, ed.render())
+            k = cv2.waitKeyEx(30)
+            if k != -1:
+                act = ed.key(k)
+            if cv2.getWindowProperty(title, cv2.WND_PROP_VISIBLE) < 1:
+                act = "quit"
+        ed.write()
+        if act == "quit":
+            break
+        i += 1 if act == "next" else -1
+        i = max(i, 0)
+    cv2.destroyAllWindows()
 
 
 def main(argv=None):
@@ -700,26 +740,7 @@ def main(argv=None):
         sys.exit("no images found")
     win = tuple(int(v) for v in args.win.lower().split("x"))
 
-    title = "dewarp_tool"
-    cv2.namedWindow(title, cv2.WINDOW_AUTOSIZE)
-    i = 0
-    while 0 <= i < len(files):
-        ed = Editor(files[i], win)
-        cv2.setMouseCallback(title, ed.on_mouse)
-        act = None
-        while act is None:
-            cv2.imshow(title, ed.render())
-            k = cv2.waitKeyEx(30)
-            if k != -1:
-                act = ed.key(k)
-            if cv2.getWindowProperty(title, cv2.WND_PROP_VISIBLE) < 1:
-                act = "quit"
-        ed.write()
-        if act == "quit":
-            break
-        i += 1 if act == "next" else -1
-        i = max(i, 0)
-    cv2.destroyAllWindows()
+    run(files, win, "dewarp_tool")
     print("hints saved next to the photos (*.hints.json). Pages you did not save with s still need step 1.")
 
 

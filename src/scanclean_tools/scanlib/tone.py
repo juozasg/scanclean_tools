@@ -138,7 +138,7 @@ def remove_edge_shadow(out, h_px, weak=200, near=1.0, min_len=6.0, max_thick=4.0
     m = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
     n, lab, st, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
     b = int(near * h_px)
-    kill = np.zeros(n, bool)
+    kill = np.zeros(int(n), dtype=bool)
     for i in range(1, n):
         x, y, w, hh, a = (int(v) for v in st[i])
         runs = [hh] * ((x <= b) + (x + w >= W - b)) + [w] * ((y <= b) + (y + hh >= H - b))
@@ -150,13 +150,13 @@ def remove_edge_shadow(out, h_px, weak=200, near=1.0, min_len=6.0, max_thick=4.0
         kill[i] = streak or corner
     if not kill.any():
         return out
-    gone = kill[lab]
+    gone = np.take(kill, np.asarray(lab, np.int32))
     near_gone = cv2.dilate(gone.astype(np.uint8), np.ones((int(2 * h_px) | 1,) * 2, np.uint8)) > 0
     n2, lab2, st2, _ = cv2.connectedComponentsWithStats(dark, connectivity=8)
     speck = (np.maximum(st2[:, 2], st2[:, 3]) < h_px)
     speck[0] = False
     res = out.copy()
-    res[(gone | (speck[lab2] & near_gone)) & ~inside] = 255
+    res[(gone | (np.take(speck, lab2) & near_gone)) & ~inside] = 255
     return res
 
 

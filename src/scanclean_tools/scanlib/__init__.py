@@ -8,4 +8,5 @@
   layout  page limits (gutter, edges), crop box, edge clean-up
   dewarp  step 1: photo -> flat colour page (+ page mask, metadata)
   tone    step 2: flat colour page -> greyscale scan
+  grid    step 2b: clean page -> straightened page (smooth B-spline grid warp)
 """

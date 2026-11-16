@@ -16,8 +16,10 @@ dependencies = [
 scanclean = "scanclean_tools.run_all:main"
 scanclean-dewarp = "scanclean_tools.step1_dewarp:main"
 scanclean-tone = "scanclean_tools.step2_tone:main"
+scanclean-grid = "scanclean_tools.step2b_grid:main"
 scanclean-pdf = "scanclean_tools.step3_pdf:main"
 dewarp-tool = "scanclean_tools.dewarp_tool:main"
+grid-tool = "scanclean_tools.grid_tool:main"
 
 [build-system]
 requires = ["uv_build>=0.13.7,<0.14.0"]
